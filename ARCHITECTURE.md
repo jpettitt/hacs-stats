@@ -55,10 +55,12 @@ last 30 days." Compounding this:
                 ┌──────────────────────────────────────────────┐
                 │  Cloudflare (CDN + TLS + DDoS)               │
                 │   ─ proxied DNS for hacs-stats.dev / .com    │
-                │   ─ Full (strict) SSL                        │
+                │   ─ edge cert publicly trusted (auto)        │
+                │   ─ SSL/TLS mode: Full (not strict)          │
                 │   ─ edge cache for static + select API paths │
                 └────────────────┬─────────────────────────────┘
-                                 │  HTTPS (CF Origin Cert)
+                                 │  HTTPS (Caddy self-signed,
+                                 │   accepted by CF "Full")
                                  ▼
                 ┌──────────────────────────────────────────────┐
                 │  VPS (Ubuntu/Debian)                         │
@@ -218,17 +220,21 @@ is overkill at v1; revisit if we ever need it.
 
 1. **DNS:** `hacs-stats.dev` A record → VPS public IP. Proxy status: **on**
    (orange cloud). `hacs-stats.com` → page rule redirect to `.dev`.
-2. **SSL/TLS mode:** Full (strict). Cloudflare verifies the origin cert on
-   every connection.
-3. **Origin Certificate:** generated in the CF dashboard (SSL/TLS → Origin
-   Server → Create Certificate). 15-year validity. Save the cert + key to
-   `/etc/caddy/cf-origin.{crt,key}` on the VPS; Caddy serves it.
-4. **Caching:** default page rules for static assets (`/static/*`,
+2. **SSL/TLS mode: Full** (NOT "Full (strict)"). Caddy serves a self-signed
+   cert at the origin via the `tls internal` directive; CF "Full" accepts it
+   without trying to verify against a public CA. No Origin Certificate to
+   generate, no Let's Encrypt, no key material on the VPS we have to rotate.
+   The publicly-trusted cert lives at the CF edge and is auto-managed.
+3. **Caching:** default page rules for static assets (`/static/*`,
    `/favicon.ico`, etc.). API responses cached selectively via response
    headers from the Node app (`Cache-Control: public, max-age=300` for the
    leaderboard, `s-maxage` for the per-repo pages).
-5. **Bot fighting:** keep at default. Rate-limit rule for `/api/*` at 60
+4. **Bot fighting:** keep at default. Rate-limit rule for `/api/*` at 60
    req/min/IP to make scraping painful but not block humans.
+
+Trade-off worth knowing: "Full" doesn't verify the origin cert, so CF can't
+detect a hypothetical MITM between CF and the VPS. Acceptable for a
+read-only public stats site; if we ever serve anything sensitive we revisit.
 
 See [deploy/README.md](./deploy/README.md) for click-by-click setup.
 
@@ -276,7 +282,7 @@ None of this is needed at v1.
 | Backend language  | TypeScript on Node 22+                                      |
 | HTTP framework    | Hono with `@hono/node-server`                               |
 | Scheduler         | `systemd` timer (no embedded cron)                          |
-| Reverse proxy     | Caddy with Cloudflare Origin Certificate (no Let's Encrypt) |
+| Reverse proxy     | Caddy with `tls internal` (self-signed), CF "Full" upstream |
 | Lint/format       | Biome (single binary)                                       |
 | Tests             | Vitest                                                      |
 | Frontend scope v1 | Full dashboard (leaderboard, search, categories, charts)    |

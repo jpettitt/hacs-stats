@@ -12,8 +12,7 @@ Phased build plan. Each phase ends in something runnable.
 - [x] Decide on hosting — VPS + Cloudflare-as-CDN (replaces the earlier
       Cloudflare-Workers plan; CF kept only for edge TLS / CDN / DDoS)
 - [x] `git init`, first commit
-- [ ] Point `hacs-stats.dev` at Cloudflare (proxied A record → VPS IP)
-- [ ] Generate Cloudflare Origin Certificate (15-year, free)
+- [ ] Point `hacs-stats.dev` at Cloudflare (proxied A record → VPS IP), set SSL mode to "Full"
 
 ## Phase 1 — Scaffold (VPS edition)
 

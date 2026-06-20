@@ -6,20 +6,27 @@ Cloudflare in front for CDN + TLS.
 ## Topology
 
 ```text
-Browser ──HTTPS (CF edge cert)──▶ Cloudflare ──HTTPS (CF Origin Cert)──▶ VPS:443
-                                                                            │
-                                                                            ▼
-                                                                       Caddy → :3000 (Node)
-                                                                                  │
-                                                                                  ▼
-                                                                            /var/lib/hacs-stats/
-                                                                              hacs-stats.db
+Browser ──HTTPS (CF edge cert, publicly trusted)──▶ Cloudflare
+                                                       │
+                                                       │  HTTPS (Caddy self-signed,
+                                                       │   accepted by CF "Full")
+                                                       ▼
+                                                    VPS:443
+                                                       │
+                                                       ▼
+                                                  Caddy → :3000 (Node)
+                                                              │
+                                                              ▼
+                                                        /var/lib/hacs-stats/
+                                                          hacs-stats.db
 ```
 
-- **Caddy** terminates TLS on the VPS using a Cloudflare-issued **Origin
-  Certificate** (free, 15-year validity, not publicly trusted but trusted by
-  Cloudflare). No Let's Encrypt needed.
-- **Cloudflare SSL/TLS mode:** Full (strict).
+- **Cloudflare edge** serves the publicly-trusted certificate to browsers
+  (auto-managed). No publicly-trusted cert is ever installed on the VPS.
+- **Caddy** terminates TLS at the origin using a Caddy-issued self-signed
+  cert (`tls internal` directive) — auto-issued, auto-renewed, zero touch.
+- **Cloudflare SSL/TLS mode:** **Full** (NOT "Full (strict)" — strict would
+  reject the self-signed cert).
 - **Node web** runs as `systemd` user `hacs-stats`, binds `127.0.0.1:3000`
   only — never directly exposed.
 - **Scraper** is a one-shot job fired by `hacs-stats-scrape.timer`
@@ -47,21 +54,16 @@ file drop, `GITHUB_TOKEN` in `/etc/hacs-stats/env`, enabling the units).
 1. **DNS** — add an A record for `hacs-stats.dev` → VPS public IP. Set the
    proxy status to **on** (orange cloud). Add a CNAME `hacs-stats.com → hacs-stats.dev`
    (also proxied).
-2. **SSL/TLS → Overview** — set encryption mode to **Full (strict)**.
-3. **SSL/TLS → Origin Server → Create Certificate** — defaults are fine
-   (RSA 2048, 15 years, both hostnames). Save the certificate (`.pem`) as
-   `/etc/caddy/cf-origin.crt` and the private key as `/etc/caddy/cf-origin.key`
-   on the VPS. Then:
-
-   ```sh
-   sudo chown root:caddy /etc/caddy/cf-origin.*
-   sudo chmod 0644 /etc/caddy/cf-origin.crt
-   sudo chmod 0640 /etc/caddy/cf-origin.key
-   ```
-
-4. **Rules → Page Rules** (or **Configuration Rules**) — add
+2. **SSL/TLS → Overview** — set encryption mode to **Full**.
+   Not "Full (strict)" — Caddy serves a self-signed cert and "strict"
+   rejects anything not chained to a public CA.
+3. **Rules → Page Rules** (or **Configuration Rules**) — add
    `hacs-stats.com/*` → 308 redirect to `https://hacs-stats.dev/$1`. Caddy has
    a fallback redirect too, but doing it at CF saves a round-trip.
+
+That's it for the cert story — no Origin Certificate to generate, no key
+material to ship to the VPS, no renewal calendar entry. Caddy's `tls internal`
+issues its own cert on first start and rotates it before expiry.
 
 ## Updates
 
@@ -100,8 +102,11 @@ object storage). A weekly systemd timer for this is on the Phase 7 TODO.
 
 - **502 from Caddy:** `systemctl status hacs-stats-web.service`. If the Node
   process is up but Caddy can't reach it, check `ss -tlnp | grep 3000`.
-- **Cloudflare 525 SSL handshake error:** the origin cert isn't installed or
-  is the wrong file. Verify with `openssl x509 -in /etc/caddy/cf-origin.crt -text -noout`.
+- **Cloudflare 525 SSL handshake error:** check that CF SSL mode is **Full**
+  not "Full (strict)" — strict rejects Caddy's self-signed cert. Then check
+  Caddy is actually serving 443: `ss -tlnp | grep :443`. If Caddy hasn't
+  generated its internal cert yet, `systemctl restart caddy` and watch
+  `journalctl -u caddy -f` for the issuance line.
 - **`SQLITE_BUSY` in web logs:** the scraper is holding a long write
   transaction. Should be rare; if persistent, raise the connection
   `busy_timeout` pragma in `packages/db/src/client.ts`.

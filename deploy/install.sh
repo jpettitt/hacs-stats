@@ -105,29 +105,27 @@ print_next_steps() {
 
 Next steps (manual):
 
-  1. Drop the Cloudflare Origin Cert at:
-       /etc/caddy/cf-origin.crt  (cert)
-       /etc/caddy/cf-origin.key  (key, chmod 0640, chgrp caddy)
-     Generate it in the Cloudflare dashboard:
-       SSL/TLS → Origin Server → Create Certificate.
+  1. Edit $ETC_DIR/env and set GITHUB_TOKEN.
 
-  2. Edit $ETC_DIR/env and set GITHUB_TOKEN.
-
-  3. Add this line to /etc/caddy/Caddyfile (or rely on the default Caddyfile
+  2. Add this line to /etc/caddy/Caddyfile (or rely on the default Caddyfile
      pattern if you keep just our config there):
        import /etc/caddy/Caddyfile.hacs-stats
 
-  4. Enable services:
+  3. Enable services:
        systemctl enable --now hacs-stats-web.service
        systemctl enable --now hacs-stats-scrape.timer
        systemctl reload caddy
 
-  5. Trigger an initial scrape (don't wait until 04:00 UTC):
+  4. Trigger an initial scrape (don't wait until 04:00 UTC):
        systemctl start hacs-stats-scrape.service
        journalctl -u hacs-stats-scrape.service -f
 
-  6. Point hacs-stats.dev DNS at this VPS (orange-cloud proxy ON, "Full
-     (strict)" SSL mode).
+  5. In the Cloudflare dashboard:
+       DNS              → A hacs-stats.dev → this VPS IP, proxy ON (orange)
+       DNS              → CNAME hacs-stats.com → hacs-stats.dev, proxy ON
+       SSL/TLS overview → set encryption mode to "Full" (NOT "Full (strict)").
+                          Caddy serves a self-signed cert via 'tls internal';
+                          "Full (strict)" would reject it.
 EOF
 }
 
