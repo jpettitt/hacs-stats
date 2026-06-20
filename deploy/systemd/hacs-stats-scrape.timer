@@ -1,0 +1,13 @@
+[Unit]
+Description=hacs-stats — daily scrape
+
+[Timer]
+# Daily at 04:00 UTC. Persistent=true means if the VPS was off at the trigger
+# time, systemd fires the job as soon as it boots — we don't silently miss days.
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+# RandomizedDelaySec spreads load if many hosts ran this; harmless for one.
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

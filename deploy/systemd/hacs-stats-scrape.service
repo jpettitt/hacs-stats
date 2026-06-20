@@ -1,0 +1,26 @@
+[Unit]
+Description=hacs-stats — one-shot scrape job
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hacs-stats
+Group=hacs-stats
+WorkingDirectory=/opt/hacs-stats
+EnvironmentFile=/etc/hacs-stats/env
+ExecStart=/usr/bin/pnpm --filter @hacs-stats/scraper start
+StandardOutput=journal
+StandardError=journal
+
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hacs-stats
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true

@@ -1,0 +1,38 @@
+# /etc/caddy/Caddyfile on the VPS.
+#
+# TLS is terminated with a Cloudflare Origin Certificate so the VPS does NOT
+# need Let's Encrypt / ACME. Cloudflare's edge handles the publicly-trusted
+# certificate; this cert is only trusted by Cloudflare.
+#
+# Generate the cert in the CF dashboard: SSL/TLS → Origin Server → Create
+# Certificate. Save the cert at /etc/caddy/cf-origin.crt and the key at
+# /etc/caddy/cf-origin.key (root:caddy, 0640 on the key).
+#
+# Set CF SSL/TLS mode to "Full (strict)" so Cloudflare verifies this cert.
+
+hacs-stats.dev {
+	tls /etc/caddy/cf-origin.crt /etc/caddy/cf-origin.key
+
+	encode zstd gzip
+
+	# Reverse proxy to the Node app on localhost. The Node process never binds
+	# to a public interface.
+	reverse_proxy 127.0.0.1:3000
+
+	# Trust Cloudflare's forwarded-for header so logs show the real client IP.
+	# CF publishes its IP ranges at https://www.cloudflare.com/ips/.
+	header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+
+	log {
+		output file /var/log/caddy/hacs-stats.log
+		format json
+	}
+}
+
+# .com → .dev redirect. CF DNS for hacs-stats.com is also proxied at the
+# Cloudflare *.com → *.dev redirect, but having this here is a belt-and-braces
+# fallback in case CF's page-rule is disabled.
+hacs-stats.com {
+	tls /etc/caddy/cf-origin.crt /etc/caddy/cf-origin.key
+	redir https://hacs-stats.dev{uri} 308
+}

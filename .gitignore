@@ -1,12 +1,14 @@
-# Wrangler local state — D1 SQLite, KV, Queue simulators.
-# Intentionally NOT auto-deleted: local data must survive restarts
-# (see ARCHITECTURE.md → Local development).
-.wrangler/
+# Local SQLite data — gitignored but NEVER auto-deleted: snapshot history must
+# survive `pnpm install` / branch switches (see ARCHITECTURE.md → Local development).
+data/
+*.db
+*.db-wal
+*.db-shm
 
-# Local secrets (GITHUB_TOKEN, etc.). Commit `.dev.vars.example` instead.
-.dev.vars
-.dev.vars.*
-!.dev.vars.example
+# Env / secrets
+.env
+.env.*
+!.env.example
 
 # Node / pnpm
 node_modules/
@@ -17,8 +19,6 @@ npm-debug.log*
 # Build output
 dist/
 build/
-.next/
-.output/
 
 # Editor / OS
 .DS_Store
@@ -36,8 +36,3 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
-
-# Env
-.env
-.env.*
-!.env.example

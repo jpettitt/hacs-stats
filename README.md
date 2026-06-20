@@ -11,8 +11,8 @@ redirecting there).
 > reviewed by the HACS maintainers or the Home Assistant project. All data is
 > sourced from public GitHub APIs.
 >
-> **Status:** v0 — design phase. No code yet. See [ARCHITECTURE.md](./ARCHITECTURE.md)
-> for the design and [TODO.md](./TODO.md) for the phased build plan.
+> **Status:** v0 — design phase. See [ARCHITECTURE.md](./ARCHITECTURE.md) for the
+> design and [TODO.md](./TODO.md) for the phased build plan.
 
 ## What we track
 
@@ -42,13 +42,48 @@ Two sources:
 
 ## Stack
 
-- **Cloudflare Workers** for the scraper, API, and SSR frontend
-- **Cloudflare D1** (SQLite) for the database
-- **Cloudflare Cron Triggers** for the daily scrape
-- **Cloudflare Pages** for the static dashboard assets
-- **TypeScript** end-to-end, **Hono** for routing, **uPlot** or **Chart.js**
-  for charts
+A single-VPS Node app behind Cloudflare-as-CDN.
 
-## License
+- **Runtime:** Node 22+, TypeScript end-to-end
+- **HTTP:** [Hono](https://hono.dev/) on `@hono/node-server`
+- **Database:** SQLite via [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3)
+  (one file, sync API, fast)
+- **Scheduler:** `systemd` timer (no in-process cron)
+- **Reverse proxy:** Caddy with a Cloudflare **Origin Certificate** (free, no ACME)
+- **CDN / TLS / DDoS:** Cloudflare in front (proxied DNS, "Full (strict)" SSL)
+- **Process supervisor:** `systemd` units for `hacs-stats-web` (long-running)
+  and `hacs-stats-scrape` (daily timer)
+- **Charts:** uPlot or Chart.js (decision deferred to Phase 5)
 
-TBD.
+## Development
+
+Prerequisites: Node 22+, `corepack` (ships with Node).
+
+```sh
+# 1. Bootstrap
+corepack enable pnpm
+pnpm install
+
+# 2. Apply schema to local SQLite (writes to ./data/dev.db)
+pnpm migrate
+
+# 3. Run the two apps (two terminals)
+pnpm dev:web        # http://localhost:3000
+pnpm dev:scraper    # one-shot — runs and exits, like the systemd timer does
+
+# 4. Seed the local DB from the HACS default lists (Phase 2+)
+pnpm seed
+```
+
+The local SQLite file lives at `./data/dev.db` (gitignored, never auto-wiped).
+Snapshot durability matters — see [ARCHITECTURE.md → Local development](./ARCHITECTURE.md#local-development).
+
+## Deploy
+
+See [deploy/README.md](./deploy/README.md) for the VPS install steps,
+systemd units, Caddyfile, and Cloudflare DNS / Origin Cert setup.
+
+## Copyright
+
+Copyright © John Pettitt. All rights reserved. Closed source — no license is
+granted to copy, modify, distribute, or use this code.

@@ -1,0 +1,13 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+# pnpm 11 requires explicit approval before running a dependency's install
+# scripts. We need:
+#   better-sqlite3 — builds a native module
+#   @biomejs/biome — fetches the native lint/format binary
+#   esbuild        — fetches the native bundler binary (used by tsx, vitest)
+allowBuilds:
+  '@biomejs/biome': true
+  better-sqlite3: true
+  esbuild: true
