@@ -3,6 +3,7 @@ export const REPO_KINDS = [
   'plugin',
   'theme',
   'appdaemon',
+  'netdaemon',
   'python_script',
   'template',
 ] as const;

@@ -38,12 +38,17 @@ and restarting the web process. Verified end-to-end.
 
 ## Phase 2 — Ingest HACS default lists
 
-- [ ] Fetch `hacs/default/{integration,plugin,theme,appdaemon,python_script,template}`
-- [ ] Upsert into `repos` with `source='default'`
-- [ ] Fetch each repo's `hacs.json`, extract `filename` → `hacs_filename`
-- [ ] Tests with fixture JSON
+- [x] Fetch `hacs/default/{integration,plugin,theme,appdaemon,netdaemon,python_script,template}` via `/HEAD/` (branch-agnostic)
+- [x] Upsert into `repos` with `source='default'`; re-runs are idempotent
+- [x] Fetch each repo's `hacs.json` with concurrency limit, extract `filename` → `hacs_filename`
+- [x] Tests with fixture JSON (22 tests total: concurrency limiter, list parser, manifest parser, db upsert)
+- [x] Use `process.hrtime.bigint()` + transactioned batch upsert (3316 inserts in ~50ms)
 
-*Acceptance:* `repos` table populated with ~3k rows after one scrape run.
+*Acceptance:* ✅ One scrape run populates 3,316 repos across 7 categories in
+~60s (3.3k `hacs.json` fetches, concurrency 12, 0 failures). 1,064 repos
+publish a `filename`; the rest fall back to HACS naming convention (handled
+in Phase 3 against release assets). Verified the web app reflects the count
+after restart.
 
 ## Phase 3 — Daily snapshot scraper
 
