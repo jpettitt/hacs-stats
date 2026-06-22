@@ -3,6 +3,7 @@ import { escapeHtml } from '../sanitize.js';
 
 export interface SearchHit {
   full_name: string;
+  hacs_name: string | null;
   kind: string;
   description: string | null;
 }
@@ -23,7 +24,7 @@ export function renderSearchPage(props: SearchPageProps): string {
   const rows = props.hits
     .map(
       (h) => `<tr>
-        <td>${repoLink(h.full_name)}</td>
+        <td>${repoLink(h.full_name, h.hacs_name)}</td>
         <td class="kind">${kindLabel(h.kind)}</td>
         <td>${h.description ? escapeHtml(h.description) : ''}</td>
       </tr>`,

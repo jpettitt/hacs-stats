@@ -79,6 +79,53 @@ describe('renderHome — XSS resistance', () => {
       newArrivals: [],
       recentlyUpdated: [],
     });
-    expect(safeHtml).toContain('<a href="/r/jpettitt/weather-radar-card">');
+    expect(safeHtml).toContain('href="/r/jpettitt/weather-radar-card"');
+  });
+
+  it('shows the hacs_name when provided, with owner/repo as muted subtitle', () => {
+    const html = renderHome({
+      repoCount: 1,
+      topByStars: [
+        {
+          full_name: 'piitaya/lovelace-mushroom',
+          hacs_name: 'Mushroom',
+          kind: 'plugin',
+          stars: 100,
+          downloads_30d: 0,
+          star_delta_30d: 0,
+          top_version_30d: null,
+        },
+      ],
+      topByDownloads30d: [],
+      trendingByStars: [],
+      newArrivals: [],
+      recentlyUpdated: [],
+    });
+    expect(html).toContain('Mushroom');
+    expect(html).toContain('(piitaya/lovelace-mushroom)');
+    expect(html).toContain('class="repo-display"');
+  });
+
+  it('escapes a malicious hacs_name', () => {
+    const html = renderHome({
+      repoCount: 1,
+      topByStars: [
+        {
+          full_name: 'attacker/repo',
+          hacs_name: '<script>alert(1)</script>',
+          kind: 'plugin',
+          stars: 1,
+          downloads_30d: 0,
+          star_delta_30d: 0,
+          top_version_30d: null,
+        },
+      ],
+      topByDownloads30d: [],
+      trendingByStars: [],
+      newArrivals: [],
+      recentlyUpdated: [],
+    });
+    expect(html).not.toContain('<script>alert(1)');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   });
 });

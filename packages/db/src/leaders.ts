@@ -10,6 +10,7 @@ import type { Db } from './client.js';
 export interface LeaderRow {
   id: number;
   full_name: string;
+  hacs_name: string | null;
   kind: RepoKind;
   description: string | null;
   archived: number;
@@ -24,7 +25,7 @@ export interface LeaderRow {
 
 const LEADER_SELECT = `
   SELECT
-    r.id, r.full_name, r.kind, r.description, r.archived,
+    r.id, r.full_name, r.hacs_name, r.kind, r.description, r.archived,
     r.first_seen_at,
     COALESCE(latest.stars, 0)            AS stars,
     latest.last_commit_at,
@@ -114,8 +115,8 @@ export function repoDetailByFullName(db: Db, fullName: string): RepoDetail | und
   return db.raw
     .prepare<[string], RepoDetail>(
       `${LEADER_SELECT.replace(
-        'r.id, r.full_name, r.kind, r.description, r.archived,',
-        'r.id, r.full_name, r.kind, r.description, r.archived, r.owner, r.name, r.hacs_filename, r.default_branch, r.last_scraped_at,',
+        'r.id, r.full_name, r.hacs_name, r.kind, r.description, r.archived,',
+        'r.id, r.full_name, r.hacs_name, r.kind, r.description, r.archived, r.owner, r.name, r.hacs_filename, r.default_branch, r.last_scraped_at,',
       )} WHERE r.full_name = ?`,
     )
     .get(fullName);

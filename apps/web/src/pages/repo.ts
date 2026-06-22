@@ -4,6 +4,7 @@ import { renderLineChart } from '../svg-chart.js';
 
 export interface RepoDetailProps {
   full_name: string;
+  hacs_name: string | null;
   kind: string;
   description: string | null;
   archived: number;
@@ -40,24 +41,32 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
   const { detail, starsSeries, releases } = vm;
   const ghUrl = safeGithubRepoUrl(detail.full_name);
 
-  const titleLink = ghUrl
-    ? `<a href="${ghUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(detail.full_name)}</a>`
-    : `<span class="repo-name unsafe">${escapeHtml(detail.full_name)}</span>`;
+  // Title: prefer the hacs.json name (escaped); always show owner/repo as a
+  // muted secondary line for unambiguous identification + GitHub link.
+  const safeFull = escapeHtml(detail.full_name);
+  const safeName = detail.hacs_name ? escapeHtml(detail.hacs_name) : null;
+  const titleHeading = safeName ?? safeFull;
+  const subtitle = safeName
+    ? `<p class="muted small subtitle">${ghUrl ? `<a href="${ghUrl}" target="_blank" rel="noopener noreferrer">${safeFull} ↗</a>` : safeFull}</p>`
+    : ghUrl
+      ? `<p class="muted small subtitle"><a href="${ghUrl}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a></p>`
+      : '';
 
-  const archivedBadge = detail.archived
-    ? ' <span class="badge" style="background:#888">archived</span>'
-    : '';
+  const archivedBadge = detail.archived ? ' <span class="badge badge-muted">archived</span>' : '';
 
   const description = detail.description
     ? `<p class="lead">${escapeHtml(detail.description)}</p>`
     : '<p class="lead muted">No description provided.</p>';
 
+  const statTile = (value: string, label: string) =>
+    `<div class="stat-tile"><strong>${escapeHtml(value)}</strong><span class="muted small">${escapeHtml(label)}</span></div>`;
+
   const statsGrid = `
-    <div class="stat" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:1rem;">
-      <div><strong style="font-size:1.5rem;">${escapeHtml(fmtInt(detail.stars))}</strong><br><span class="muted small">stars</span></div>
-      <div><strong style="font-size:1.5rem;">${escapeHtml(fmtDelta(detail.star_delta_7d))}</strong><br><span class="muted small">stars Δ 7d</span></div>
-      <div><strong style="font-size:1.5rem;">${escapeHtml(fmtDelta(detail.star_delta_30d))}</strong><br><span class="muted small">stars Δ 30d</span></div>
-      <div><strong style="font-size:1.5rem;">${escapeHtml(fmtInt(detail.downloads_30d))}</strong><br><span class="muted small">downloads 30d</span></div>
+    <div class="stat stats-row">
+      ${statTile(fmtInt(detail.stars), 'stars')}
+      ${statTile(fmtDelta(detail.star_delta_7d), 'stars Δ 7d')}
+      ${statTile(fmtDelta(detail.star_delta_30d), 'stars Δ 30d')}
+      ${statTile(fmtInt(detail.downloads_30d), 'downloads 30d')}
     </div>`;
 
   const topVersion = detail.top_version_30d
@@ -107,7 +116,8 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
     </table>`;
 
   return `
-    <h2 style="margin-bottom:.25rem;">${titleLink}${archivedBadge}</h2>
+    <h2 class="repo-title">${titleHeading}${archivedBadge}</h2>
+    ${subtitle}
     ${description}
     ${statsGrid}
     ${topVersion}

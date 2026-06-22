@@ -123,6 +123,7 @@ app.get('/r/:owner/:name', (c) => {
   const body = renderRepoDetail({
     detail: {
       full_name: detail.full_name,
+      hacs_name: detail.hacs_name,
       kind: detail.kind,
       description: detail.description,
       archived: detail.archived,
@@ -140,7 +141,10 @@ app.get('/r/:owner/:name', (c) => {
     starsSeries,
     releases: releaseRows,
   });
-  return c.html(renderLayout({ title: `${fullName} — hacs-stats`, body }));
+  const title = detail.hacs_name
+    ? `${detail.hacs_name} (${fullName}) — hacs-stats`
+    : `${fullName} — hacs-stats`;
+  return c.html(renderLayout({ title, body }));
 });
 
 app.get('/search', (c) => {
@@ -150,6 +154,7 @@ app.get('/search', (c) => {
     query: q,
     hits: hits.map((r) => ({
       full_name: r.full_name,
+      hacs_name: r.hacs_name,
       kind: r.kind,
       description: r.description,
     })),

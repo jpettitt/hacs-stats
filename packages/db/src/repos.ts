@@ -54,12 +54,25 @@ export function upsertRepo(db: Db, input: UpsertRepoInput): number {
   return row.id;
 }
 
-export interface SetHacsFilenameInput {
+export interface SetHacsManifestInput {
   fullName: string;
   hacsFilename: string | null;
+  hacsName: string | null;
 }
 
-export function setHacsFilename(db: Db, input: SetHacsFilenameInput): void {
+export function setHacsManifest(db: Db, input: SetHacsManifestInput): void {
+  db.raw
+    .prepare(
+      'UPDATE repos SET hacs_filename = ?, hacs_name = ?, last_scraped_at = ? WHERE full_name = ?',
+    )
+    .run(input.hacsFilename, input.hacsName, new Date().toISOString(), input.fullName);
+}
+
+/** Kept under the old name for tests that haven't migrated yet. */
+export function setHacsFilename(
+  db: Db,
+  input: { fullName: string; hacsFilename: string | null },
+): void {
   db.raw
     .prepare('UPDATE repos SET hacs_filename = ?, last_scraped_at = ? WHERE full_name = ?')
     .run(input.hacsFilename, new Date().toISOString(), input.fullName);

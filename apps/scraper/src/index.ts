@@ -10,7 +10,7 @@ import { mapLimit } from './concurrency.js';
 import { fetchRepoMetadataBatches } from './github-graphql.js';
 import { fetchReleases } from './github-releases.js';
 import { fetchAllDefaultLists } from './hacs-default.js';
-import { fetchHacsManifest, manifestFilename } from './hacs-manifest.js';
+import { fetchHacsManifest, manifestFilename, manifestName } from './hacs-manifest.js';
 import { RateLimitGuard } from './rate-limit.js';
 import { applyRetention } from './retention.js';
 import { computeStatsCache } from './rollup.js';
@@ -88,15 +88,16 @@ async function ingest(): Promise<IngestResult> {
     });
     upsertAll(entries);
 
-    // hacs.json fetch happens only for repos whose `hacs_filename` is still
-    // null (first-seen, or wiped). Refreshing it daily for 3k repos is wasted
-    // work — manifests rarely change.
+    // hacs.json fetch happens only for repos missing EITHER the filename OR
+    // the display name — picks up new repos AND backfills hacs_name on repos
+    // that were scraped before that column existed. Refreshing it daily for
+    // 3k repos that haven't changed is wasted work.
     const needManifest = entries.filter((e) => {
       const row = repos.getRepoByFullName(db, e.fullName);
-      return row && row.hacs_filename === null;
+      return row && (row.hacs_filename === null || row.hacs_name === null);
     });
     console.log(
-      `[scrape]   fetching hacs.json for ${needManifest.length} new repos (concurrency ${MANIFEST_CONCURRENCY})`,
+      `[scrape]   fetching hacs.json for ${needManifest.length} new/backfill repos (concurrency ${MANIFEST_CONCURRENCY})`,
     );
 
     let fetched = 0;
@@ -105,7 +106,12 @@ async function ingest(): Promise<IngestResult> {
     const results = await mapLimit(needManifest, MANIFEST_CONCURRENCY, async (e) => {
       const m = await fetchHacsManifest(e.fullName, { bearerToken: GITHUB_TOKEN });
       const filename = manifestFilename(m);
-      repos.setHacsFilename(db, { fullName: e.fullName, hacsFilename: filename });
+      const name = manifestName(m);
+      repos.setHacsManifest(db, {
+        fullName: e.fullName,
+        hacsFilename: filename,
+        hacsName: name,
+      });
       return filename;
     });
     for (const r of results) {

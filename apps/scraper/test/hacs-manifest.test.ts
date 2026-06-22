@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchHacsManifest, manifestFilename } from '../src/hacs-manifest.js';
+import { fetchHacsManifest, manifestFilename, manifestName } from '../src/hacs-manifest.js';
 
 function res(body: string, status: number): Response {
   return new Response(body, { status });
@@ -64,5 +64,34 @@ describe('manifestFilename', () => {
 
   it('returns the filename when present', () => {
     expect(manifestFilename({ filename: 'foo.js' })).toBe('foo.js');
+  });
+});
+
+describe('manifestName', () => {
+  it('returns the trimmed name when present', () => {
+    expect(manifestName({ name: 'Mushroom' })).toBe('Mushroom');
+    expect(manifestName({ name: '   Mushroom   ' })).toBe('Mushroom');
+  });
+
+  it('returns null for missing or empty name', () => {
+    expect(manifestName({})).toBeNull();
+    expect(manifestName({ name: '' })).toBeNull();
+    expect(manifestName({ name: '   ' })).toBeNull();
+    expect(manifestName(null)).toBeNull();
+  });
+
+  it('rejects names with control characters (defence in depth)', () => {
+    expect(manifestName({ name: 'bad\x00name' })).toBeNull();
+    expect(manifestName({ name: 'newline\nhere' })).toBeNull();
+    expect(manifestName({ name: 'tab\there' })).toBeNull();
+  });
+
+  it('rejects absurdly long names (likely junk / abuse)', () => {
+    expect(manifestName({ name: 'x'.repeat(121) })).toBeNull();
+    expect(manifestName({ name: 'x'.repeat(120) })).toBe('x'.repeat(120));
+  });
+
+  it('allows unicode (e.g. emoji, accents)', () => {
+    expect(manifestName({ name: 'Café ☕' })).toBe('Café ☕');
   });
 });

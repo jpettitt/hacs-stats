@@ -76,7 +76,7 @@ export function renderHome(props: HomeProps): string {
         <tbody>${recentlyUpdated
           .map(
             (r) => `<tr>
-              <td>${repoLink(r.full_name)}</td>
+              <td>${repoLink(r.full_name, r.hacs_name)}</td>
               <td class="kind">${kindLabel(r.kind)}</td>
               <td class="num small">${fmtDate(r.last_commit_at)}</td>
               <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
@@ -94,7 +94,7 @@ export function renderHome(props: HomeProps): string {
         <tbody>${newArrivals
           .map(
             (r) => `<tr>
-              <td>${repoLink(r.full_name)}</td>
+              <td>${repoLink(r.full_name, r.hacs_name)}</td>
               <td class="kind">${kindLabel(r.kind)}</td>
               <td class="num small">${fmtDate(r.first_seen_at)}</td>
             </tr>`,

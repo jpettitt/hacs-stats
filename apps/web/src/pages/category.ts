@@ -28,16 +28,14 @@ export function renderCategoriesIndex(props: CategoriesIndexProps): string {
   const cards = props.totals
     .map(
       (t) =>
-        `<a class="card" style="display:block;text-decoration:none;color:inherit;" href="/category/${escapeHtml(t.kind)}">
-          <strong style="font-size:1.5rem;">${escapeHtml(fmtInt(t.n))}</strong><br>
+        `<a class="card" href="/category/${escapeHtml(t.kind)}">
+          <strong>${escapeHtml(fmtInt(t.n))}</strong>
           <span>${kindLabel(t.kind)}</span>
         </a>`,
     )
     .join('');
   return `
     <h2>Browse by category</h2>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:1rem;">
-      ${cards}
-    </div>
+    <div class="cards-grid">${cards}</div>
   `;
 }

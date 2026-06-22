@@ -8,6 +8,8 @@ import { escapeHtml, safeGithubRepoUrl } from './sanitize.js';
  */
 export interface RowForList {
   full_name: string;
+  /** Display name from the repo's hacs.json. null when not set / not yet backfilled. */
+  hacs_name?: string | null;
   kind: string;
   stars: number;
   downloads_30d: number;
@@ -38,12 +40,28 @@ export function fmtDelta(n: number): string {
   return `${sign}${fmtInt(n)}`;
 }
 
-export function repoLink(fullName: string): string {
-  const safeText = escapeHtml(fullName);
+/**
+ * Render the canonical repo identifier. When the repo declared a `name` in
+ * its `hacs.json`, we show that prominently with the owner/repo in a muted
+ * sub-line; otherwise just the owner/repo. The link target is the internal
+ * detail page when the name passes the strict GitHub-name validator,
+ * otherwise an inert <span> (defence-in-depth — the same name reaches the
+ * URL path and we don't want anything weird in there).
+ */
+export function repoLink(fullName: string, hacsName?: string | null): string {
+  const safeFull = escapeHtml(fullName);
   const ghUrl = safeGithubRepoUrl(fullName);
-  if (!ghUrl) return `<span class="repo-name unsafe">${safeText}</span>`;
-  // Same allow-list keeps the internal href safe too.
-  return `<a href="/r/${fullName}">${safeText}</a>`;
+  if (!ghUrl) {
+    // Invalid name — render plain text, no link. We deliberately do NOT
+    // surface hacs_name here either, because if the full_name is unsafe the
+    // hacs_name is also untrusted (same data plane).
+    return `<span class="repo-name unsafe">${safeFull}</span>`;
+  }
+  if (hacsName && hacsName.length > 0) {
+    const safeName = escapeHtml(hacsName);
+    return `<a class="repo-name" href="/r/${fullName}"><span class="repo-display">${safeName}</span> <span class="repo-slug muted small">(${safeFull})</span></a>`;
+  }
+  return `<a class="repo-name" href="/r/${fullName}">${safeFull}</a>`;
 }
 
 export function kindLabel(kind: string): string {
@@ -67,7 +85,7 @@ export function renderLeaderTable(rows: RowForList[], opts: LeaderTableOptions):
   const body = rows
     .map(
       (r) => `<tr>
-        <td>${repoLink(r.full_name)}</td>
+        <td>${repoLink(r.full_name, r.hacs_name)}</td>
         <td class="kind">${kindLabel(r.kind)}</td>
         <td class="num">${escapeHtml(opts.formatValue(r))}</td>
         ${showDelta ? `<td class="num small">${escapeHtml(fmtDelta(r.star_delta_30d))}</td>` : ''}
