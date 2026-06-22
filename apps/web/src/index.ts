@@ -65,6 +65,32 @@ function topByDownloads30d(limit = 20): LeaderRow[] {
 
 const app = new Hono();
 
+// Defence-in-depth: even if a sanitisation bug ever lets a `<script>` slip
+// into rendered HTML, this CSP prevents the browser from executing it.
+// - default-src 'self'      — disallow off-domain scripts, fonts, iframes, etc.
+// - style-src 'self' 'unsafe-inline' — page styles are inline today; tighten
+//   once we move to an external stylesheet
+// - img-src 'self' data: — small inline icons allowed
+// - object-src 'none' — no <object>/<embed> plugins
+// - base-uri 'none' — block <base> tag URL hijacks
+// - frame-ancestors 'none' — clickjacking protection
+const CSP = [
+  "default-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+app.use('*', async (c, next) => {
+  await next();
+  c.header('Content-Security-Policy', CSP);
+  c.header('Referrer-Policy', 'no-referrer-when-downgrade');
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('Permissions-Policy', 'interest-cohort=()');
+});
+
 app.get('/health', (c) => c.json({ ok: true }));
 
 app.get('/api/stats/overview', (c) =>

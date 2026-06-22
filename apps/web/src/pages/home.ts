@@ -1,3 +1,5 @@
+import { escapeHtml, safeGithubRepoUrl } from '../sanitize.js';
+
 export interface LeaderRow {
   full_name: string;
   kind: string;
@@ -33,17 +35,17 @@ function fmtDelta(n: number): string {
   return `${sign}${fmtInt(n)}`;
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
+/**
+ * Render an `<a href>` only when the full_name passes the strict GitHub-name
+ * validator. If it doesn't, fall back to text — better a missing link than
+ * an attacker-controlled URL.
+ */
 function repoLink(fullName: string): string {
-  const safe = escapeHtml(fullName);
-  return `<a href="https://github.com/${safe}" target="_blank" rel="noopener noreferrer">${safe}</a>`;
+  const url = safeGithubRepoUrl(fullName);
+  const safeText = escapeHtml(fullName);
+  if (!url) return `<span class="repo-name unsafe">${safeText}</span>`;
+  // url is constructed from validated parts, no escaping needed in the href.
+  return `<a href="${url}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
 }
 
 function leaderTable(
