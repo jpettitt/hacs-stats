@@ -72,12 +72,28 @@ overnight.
 
 ## Phase 4 — Stats rollup + retention
 
-- [ ] Nightly step: compute `stats_cache` (top 30d release, deltas, totals)
-- [ ] Nightly step: collapse old snapshots (>90d) to weekly
-- [ ] Nightly step: collapse old asset snapshots (>30d) to weekly
-- [ ] Tests with seeded historical data
+- [x] Step 4 of orchestrator: `computeStatsCache` runs every scrape (~75ms
+      for 3.3k repos), writes `top_version_30d`, `top_version_downloads_30d`,
+      `total_downloads_30d`, `star_delta_7d`, `star_delta_30d`
+- [x] Asset attribution honours `hacs_filename` when set; falls back to
+      summing all assets per release when not (with a comment explaining why
+      in `rollup.ts`)
+- [x] `applyRetention` collapses `repo_snapshots` older than 90 days and
+      `release_asset_snapshots` older than 30 days to one row per ISO week
+      (latest-in-week wins); JS-computed cutoffs, not inline SQL date math
+- [x] 14 new tests with seeded historical data — day-1 zero-delta case,
+      `hacs_filename` filter, top-version tie-break, retention boundary
+- [x] Web `/` and `/api/stats/overview` now serve top-by-stars and
+      top-by-30d-downloads leaderboards rendered from `stats_cache`
+- [x] Bugfix: `SCRAPE_LIMIT=0` was being treated as "no limit" because of
+      truthy-string then falsy-number; now distinguishes undefined from 0
 
-*Acceptance:* `stats_cache` populated; old snapshot rows reduced as expected.
+*Acceptance:* ✅ Full scrape now writes `stats_cache` (3,321 rows, ~75ms).
+Verified rollup math by injecting a synthetic 30-day-ago baseline for
+piitaya/lovelace-mushroom — got `top_version_30d=v5.2.0`,
+`top_version_downloads_30d=5000`, `star_delta_30d=131`. Retention "nothing
+old enough to collapse yet" — correct on day 1; the boundary tests prove
+the math.
 
 ## Phase 5 — Frontend v1
 

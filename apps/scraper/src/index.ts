@@ -12,13 +12,20 @@ import { fetchReleases } from './github-releases.js';
 import { fetchAllDefaultLists } from './hacs-default.js';
 import { fetchHacsManifest, manifestFilename } from './hacs-manifest.js';
 import { RateLimitGuard } from './rate-limit.js';
+import { applyRetention } from './retention.js';
+import { computeStatsCache } from './rollup.js';
 import { todayUtcIsoDate } from './snapshot-date.js';
 
 const DATABASE_PATH = resolveDatabasePath();
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const MANIFEST_CONCURRENCY = Number(process.env.MANIFEST_CONCURRENCY ?? 12);
 const RELEASES_CONCURRENCY = Number(process.env.RELEASES_CONCURRENCY ?? 12);
-const SCRAPE_LIMIT = process.env.SCRAPE_LIMIT ? Number(process.env.SCRAPE_LIMIT) : undefined;
+// `process.env.SCRAPE_LIMIT ? …` would treat '0' as truthy (non-empty string)
+// AND `0` as falsy after Number(), then `LIMIT 0` would silently become "no
+// limit" — exactly the surprising behaviour we DON'T want. Explicitly check
+// for undefined so SCRAPE_LIMIT=0 means "0 repos".
+const SCRAPE_LIMIT =
+  process.env.SCRAPE_LIMIT !== undefined ? Number(process.env.SCRAPE_LIMIT) : undefined;
 const SKIP_DEFAULTS = process.env.SKIP_DEFAULTS === '1';
 
 interface IngestResult {
@@ -33,6 +40,12 @@ interface IngestResult {
     assetSnapshotsWritten: number;
     failures: number;
   } | null;
+  rollup: { rowsWritten: number; durationSec: number; asOfDate: string };
+  retention: {
+    repoSnapshotsDeleted: number;
+    assetSnapshotsDeleted: number;
+    durationSec: number;
+  };
   rateLimit: { remaining: number };
   durationSec: number;
 }
@@ -100,7 +113,7 @@ async function ingest(): Promise<IngestResult> {
 
   const allRepos = repos.listAllRepoIdents(db, SCRAPE_LIMIT);
   console.log(
-    `[scrape]   ${allRepos.length} repos to snapshot${SCRAPE_LIMIT ? ` (SCRAPE_LIMIT=${SCRAPE_LIMIT})` : ''}`,
+    `[scrape]   ${allRepos.length} repos to snapshot${SCRAPE_LIMIT !== undefined ? ` (SCRAPE_LIMIT=${SCRAPE_LIMIT})` : ''}`,
   );
 
   // Token is required for Phase 3 — GraphQL needs auth, REST releases at
@@ -228,6 +241,23 @@ async function ingest(): Promise<IngestResult> {
     };
   }
 
+  // --- Phase 4 step: rollup + retention -----------------------------------
+  // Always run, even when Phase 3 was skipped — keeps stats_cache and
+  // retention thresholds in sync with whatever data IS in the DB. Cheap.
+  console.log('[scrape] step 4/4 — recomputing stats_cache and applying retention');
+  const rollup = computeStatsCache(db, { asOfDate: today });
+  console.log(
+    `[scrape]   stats_cache: ${rollup.rowsWritten} rows (${rollup.durationSec.toFixed(2)}s)`,
+  );
+  const retention = applyRetention(db, { asOfDate: today });
+  if (retention.repoSnapshotsDeleted || retention.assetSnapshotsDeleted) {
+    console.log(
+      `[scrape]   retention: collapsed ${retention.repoSnapshotsDeleted} repo_snapshots, ${retention.assetSnapshotsDeleted} asset_snapshots`,
+    );
+  } else {
+    console.log('[scrape]   retention: nothing old enough to collapse yet');
+  }
+
   const reposAfter = repos.countRepos(db);
   db.close();
 
@@ -236,6 +266,8 @@ async function ingest(): Promise<IngestResult> {
     manifests,
     metadata,
     releases: releasesSummary,
+    rollup,
+    retention,
     rateLimit: { remaining: guard.snapshot().remaining },
     durationSec: Number(process.hrtime.bigint() - t0) / 1e9,
   };

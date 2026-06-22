@@ -4,3 +4,4 @@ export { defaultDatabasePath, resolveDatabasePath } from './paths.js';
 export * as repos from './repos.js';
 export * as snapshots from './snapshots.js';
 export * as releases from './releases.js';
+export * as statsCache from './stats-cache.js';

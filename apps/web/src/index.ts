@@ -10,13 +10,80 @@ const PORT = Number(process.env.PORT ?? 3000);
 // from the user-facing process. The scraper holds the only RW handle.
 const db = openDb({ path: DATABASE_PATH, mode: 'readonly' });
 
+interface LeaderRow {
+  full_name: string;
+  kind: string;
+  stars: number;
+  downloads_30d: number;
+  star_delta_30d: number;
+  top_version_30d: string | null;
+}
+
+function topByStars(limit = 20): LeaderRow[] {
+  return db.raw
+    .prepare<[number], LeaderRow>(`
+      SELECT
+        r.full_name, r.kind,
+        COALESCE(latest.stars, 0)              AS stars,
+        COALESCE(sc.total_downloads_30d, 0)    AS downloads_30d,
+        COALESCE(sc.star_delta_30d, 0)         AS star_delta_30d,
+        sc.top_version_30d                     AS top_version_30d
+      FROM repos r
+      LEFT JOIN stats_cache sc ON sc.repo_id = r.id
+      LEFT JOIN (
+        SELECT repo_id, stars
+        FROM repo_snapshots
+        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM repo_snapshots)
+      ) latest ON latest.repo_id = r.id
+      ORDER BY stars DESC
+      LIMIT ?
+    `)
+    .all(limit);
+}
+
+function topByDownloads30d(limit = 20): LeaderRow[] {
+  return db.raw
+    .prepare<[number], LeaderRow>(`
+      SELECT
+        r.full_name, r.kind,
+        COALESCE(latest.stars, 0)              AS stars,
+        COALESCE(sc.total_downloads_30d, 0)    AS downloads_30d,
+        COALESCE(sc.star_delta_30d, 0)         AS star_delta_30d,
+        sc.top_version_30d                     AS top_version_30d
+      FROM repos r
+      LEFT JOIN stats_cache sc ON sc.repo_id = r.id
+      LEFT JOIN (
+        SELECT repo_id, stars
+        FROM repo_snapshots
+        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM repo_snapshots)
+      ) latest ON latest.repo_id = r.id
+      ORDER BY downloads_30d DESC, stars DESC
+      LIMIT ?
+    `)
+    .all(limit);
+}
+
 const app = new Hono();
 
 app.get('/health', (c) => c.json({ ok: true }));
 
-app.get('/api/stats/overview', (c) => c.json({ repos: repos.countRepos(db) }));
+app.get('/api/stats/overview', (c) =>
+  c.json({
+    repos: repos.countRepos(db),
+    topByStars: topByStars(20),
+    topByDownloads30d: topByDownloads30d(20),
+  }),
+);
 
-app.get('/', (c) => c.html(renderHome({ repoCount: repos.countRepos(db) })));
+app.get('/', (c) =>
+  c.html(
+    renderHome({
+      repoCount: repos.countRepos(db),
+      topByStars: topByStars(15),
+      topByDownloads30d: topByDownloads30d(15),
+    }),
+  ),
+);
 
 const server = serve({ fetch: app.fetch, port: PORT }, ({ port }) => {
   console.log(`hacs-stats web listening on http://localhost:${port}`);

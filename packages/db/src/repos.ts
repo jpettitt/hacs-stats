@@ -73,11 +73,19 @@ export interface AllRepoIdent {
 }
 
 export function listAllRepoIdents(db: Db, limit?: number): AllRepoIdent[] {
-  const sql = limit
-    ? 'SELECT id, owner, name, full_name FROM repos ORDER BY id LIMIT ?'
-    : 'SELECT id, owner, name, full_name FROM repos ORDER BY id';
-  const stmt = db.raw.prepare<number[], AllRepoIdent>(sql);
-  return limit ? stmt.all(limit) : stmt.all();
+  // Distinguish "no limit" (undefined) from "limit zero" (0). The earlier
+  // `limit ? …` form treated both as "no limit", which surprised callers
+  // who passed SCRAPE_LIMIT=0 expecting zero repos.
+  if (limit === undefined) {
+    return db.raw
+      .prepare<[], AllRepoIdent>('SELECT id, owner, name, full_name FROM repos ORDER BY id')
+      .all();
+  }
+  return db.raw
+    .prepare<[number], AllRepoIdent>(
+      'SELECT id, owner, name, full_name FROM repos ORDER BY id LIMIT ?',
+    )
+    .all(limit);
 }
 
 export function getReleasesEtag(db: Db, repoId: number): string | null {
