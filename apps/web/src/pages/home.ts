@@ -17,6 +17,12 @@ function fmtDate(iso: string | null | undefined): string {
   return escapeHtml(iso.slice(0, 10));
 }
 
+function descCell(d: string | null | undefined, max = 90): string {
+  if (!d) return '<td class="desc-col muted small"></td>';
+  const trimmed = d.length > max ? `${d.slice(0, max - 1).trimEnd()}…` : d;
+  return `<td class="desc-col muted small">${escapeHtml(trimmed)}</td>`;
+}
+
 export function renderHome(props: HomeProps): string {
   const {
     repoCount,
@@ -72,11 +78,12 @@ export function renderHome(props: HomeProps): string {
       <h2>Recently active</h2>
       <p class="lead small">Most recent commit on the default branch.</p>
       <table>
-        <thead><tr><th>Repo</th><th>Kind</th><th class="num">Last commit</th><th class="num">Stars</th></tr></thead>
+        <thead><tr><th>Repo</th><th class="desc-col">Description</th><th>Kind</th><th class="num">Last commit</th><th class="num">Stars</th></tr></thead>
         <tbody>${recentlyUpdated
           .map(
             (r) => `<tr>
               <td>${repoLink(r.full_name, r.hacs_name)}</td>
+              ${descCell(r.description)}
               <td class="kind">${kindLabel(r.kind)}</td>
               <td class="num small">${fmtDate(r.last_commit_at)}</td>
               <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
@@ -90,11 +97,12 @@ export function renderHome(props: HomeProps): string {
       <h2>New arrivals</h2>
       <p class="lead small">Recently added to the HACS default lists.</p>
       <table>
-        <thead><tr><th>Repo</th><th>Kind</th><th class="num">First seen</th></tr></thead>
+        <thead><tr><th>Repo</th><th class="desc-col">Description</th><th>Kind</th><th class="num">First seen</th></tr></thead>
         <tbody>${newArrivals
           .map(
             (r) => `<tr>
               <td>${repoLink(r.full_name, r.hacs_name)}</td>
+              ${descCell(r.description)}
               <td class="kind">${kindLabel(r.kind)}</td>
               <td class="num small">${fmtDate(r.first_seen_at)}</td>
             </tr>`,

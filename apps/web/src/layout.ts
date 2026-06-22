@@ -233,8 +233,12 @@ th {
 }
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: var(--bg-elev-2); }
-td.kind { color: var(--text-muted); font-size: .9rem; }
-td.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.kind { color: var(--text-muted); font-size: .9rem; white-space: nowrap; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Description column wraps but never grows beyond ~40ch so the repo name
+   column doesn't get squashed on wide leaderboards. */
+.desc-col { max-width: 32rem; }
+table { table-layout: auto; }
 
 /* ---------- repo name --------------------------------------------- */
 a.repo-name { text-decoration: none; color: var(--text); }

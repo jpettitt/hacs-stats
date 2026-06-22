@@ -156,6 +156,11 @@ async function ingest(): Promise<IngestResult> {
           }
           const repoId = fullNameToId.get(m.fullName);
           if (repoId === undefined) continue;
+          // Two separate writes per repo:
+          //   - snapshot row (fast-moving: stars/forks/issues + last commit)
+          //   - repo row (slow-moving: description / archived / default_branch)
+          // The slow-moving fields are properties of the repo, not a daily
+          // measurement, so they live on `repos`, not on every snapshot.
           snapshots.upsertRepoSnapshot(db, {
             repoId,
             snapshotDate: today,
@@ -163,6 +168,12 @@ async function ingest(): Promise<IngestResult> {
             forks: m.forks ?? 0,
             openIssues: m.openIssues ?? 0,
             lastCommitAt: m.lastCommitAt,
+          });
+          repos.updateRepoMetadata(db, {
+            repoId,
+            description: m.description,
+            archived: m.archived ?? false,
+            defaultBranch: m.defaultBranch,
           });
           snapshotsWritten++;
         }

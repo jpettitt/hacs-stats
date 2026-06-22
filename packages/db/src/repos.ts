@@ -120,6 +120,29 @@ export function markScraped(db: Db, repoId: number): void {
     .run(new Date().toISOString(), repoId);
 }
 
+export interface UpdateRepoMetadataInput {
+  repoId: number;
+  description: string | null;
+  archived: boolean;
+  defaultBranch: string | null;
+}
+
+/**
+ * Persist the slow-moving fields GraphQL returns on every batch. The fast-
+ * moving ones (stars, forks, issues) go into repo_snapshots; these belong on
+ * the repos row itself because they're effectively properties of the repo,
+ * not a daily measurement.
+ *
+ * Was missed in the original Phase 3 wiring — the scraper fetched these
+ * fields but only wrote the snapshot, leaving `description` empty
+ * everywhere the UI surfaced it.
+ */
+export function updateRepoMetadata(db: Db, input: UpdateRepoMetadataInput): void {
+  db.raw
+    .prepare('UPDATE repos SET description = ?, archived = ?, default_branch = ? WHERE id = ?')
+    .run(input.description, input.archived ? 1 : 0, input.defaultBranch, input.repoId);
+}
+
 export interface CategoryCount {
   kind: string;
   n: number;

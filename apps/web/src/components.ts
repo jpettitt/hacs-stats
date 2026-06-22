@@ -73,12 +73,23 @@ export interface LeaderTableOptions {
   formatValue: (r: RowForList) => string;
   /** Hide the stars-delta column when sorting by stars (it would be redundant). */
   showStarDelta?: boolean;
+  /** Show the description column. Default true. Disable for compact tables. */
+  showDescription?: boolean;
+}
+
+/** Truncate long descriptions for compact display in tables. */
+function clip(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 1).trimEnd()}…`;
 }
 
 export function renderLeaderTable(rows: RowForList[], opts: LeaderTableOptions): string {
   const showDelta = opts.showStarDelta ?? true;
+  const showDesc = opts.showDescription ?? true;
   const head = `<tr>
-    <th>Repo</th><th>Kind</th>
+    <th>Repo</th>
+    ${showDesc ? '<th class="desc-col">Description</th>' : ''}
+    <th>Kind</th>
     <th class="num">${escapeHtml(opts.valueLabel)}</th>
     ${showDelta ? '<th class="num">Stars Δ30d</th>' : ''}
   </tr>`;
@@ -86,6 +97,7 @@ export function renderLeaderTable(rows: RowForList[], opts: LeaderTableOptions):
     .map(
       (r) => `<tr>
         <td>${repoLink(r.full_name, r.hacs_name)}</td>
+        ${showDesc ? `<td class="desc-col muted small">${r.description ? escapeHtml(clip(r.description, 110)) : ''}</td>` : ''}
         <td class="kind">${kindLabel(r.kind)}</td>
         <td class="num">${escapeHtml(opts.formatValue(r))}</td>
         ${showDelta ? `<td class="num small">${escapeHtml(fmtDelta(r.star_delta_30d))}</td>` : ''}

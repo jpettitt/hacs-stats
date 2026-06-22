@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/client.js';
 import { runMigrations } from '../src/migrations.js';
-import { countRepos, getRepoByFullName, setHacsFilename, upsertRepo } from '../src/repos.js';
+import {
+  countRepos,
+  getRepoByFullName,
+  setHacsFilename,
+  updateRepoMetadata,
+  upsertRepo,
+} from '../src/repos.js';
 
 function freshDb() {
   // ':memory:' SQLite — schema applied per test, no fixture file management.
@@ -70,6 +76,49 @@ describe('upsertRepo', () => {
     });
     tx(250);
     expect(countRepos(db)).toBe(250);
+  });
+});
+
+describe('updateRepoMetadata', () => {
+  it('writes description / archived / default_branch from a GraphQL result', () => {
+    const db = freshDb();
+    const id = upsertRepo(db, { owner: 'a', name: 'b', kind: 'plugin', source: 'default' });
+    updateRepoMetadata(db, {
+      repoId: id,
+      description: 'Best card ever',
+      archived: false,
+      defaultBranch: 'main',
+    });
+    const row = getRepoByFullName(db, 'a/b');
+    expect(row?.description).toBe('Best card ever');
+    expect(row?.archived).toBe(0);
+    expect(row?.default_branch).toBe('main');
+  });
+
+  it('handles archived=true (boolean stored as INTEGER 1)', () => {
+    const db = freshDb();
+    const id = upsertRepo(db, { owner: 'a', name: 'b', kind: 'plugin', source: 'default' });
+    updateRepoMetadata(db, {
+      repoId: id,
+      description: null,
+      archived: true,
+      defaultBranch: 'main',
+    });
+    expect(getRepoByFullName(db, 'a/b')?.archived).toBe(1);
+  });
+
+  it('accepts null description and null default_branch', () => {
+    const db = freshDb();
+    const id = upsertRepo(db, { owner: 'a', name: 'b', kind: 'plugin', source: 'default' });
+    updateRepoMetadata(db, {
+      repoId: id,
+      description: null,
+      archived: false,
+      defaultBranch: null,
+    });
+    const row = getRepoByFullName(db, 'a/b');
+    expect(row?.description).toBeNull();
+    expect(row?.default_branch).toBeNull();
   });
 });
 
