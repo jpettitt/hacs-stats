@@ -27,6 +27,10 @@ const RELEASES_CONCURRENCY = Number(process.env.RELEASES_CONCURRENCY ?? 12);
 const SCRAPE_LIMIT =
   process.env.SCRAPE_LIMIT !== undefined ? Number(process.env.SCRAPE_LIMIT) : undefined;
 const SKIP_DEFAULTS = process.env.SKIP_DEFAULTS === '1';
+// SNAPSHOT_DATE=YYYY-MM-DD overrides the UTC "today" for this run. Lets dev
+// fabricate multi-day history without waiting for UTC midnight. Logged
+// loudly when set so a fake-time run isn't mistaken for a real one.
+const SNAPSHOT_DATE = process.env.SNAPSHOT_DATE;
 
 interface IngestResult {
   defaults: { listEntries: number; reposAfter: number };
@@ -52,7 +56,10 @@ interface IngestResult {
 
 async function ingest(): Promise<IngestResult> {
   const t0 = process.hrtime.bigint();
-  const today = todayUtcIsoDate();
+  const today = SNAPSHOT_DATE ?? todayUtcIsoDate();
+  if (SNAPSHOT_DATE) {
+    console.log(`[scrape] ⚠️  SNAPSHOT_DATE=${SNAPSHOT_DATE} — writing under a FAKE date`);
+  }
   const guard = new RateLimitGuard();
   const db = openDb({ path: DATABASE_PATH });
 

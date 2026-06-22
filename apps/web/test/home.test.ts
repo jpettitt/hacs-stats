@@ -36,6 +36,9 @@ describe('renderHome — XSS resistance', () => {
     repoCount: MALICIOUS_ROWS.length,
     topByStars: MALICIOUS_ROWS,
     topByDownloads30d: MALICIOUS_ROWS,
+    trendingByStars: MALICIOUS_ROWS,
+    newArrivals: MALICIOUS_ROWS,
+    recentlyUpdated: MALICIOUS_ROWS,
   });
 
   it('never emits a raw <script> from malicious data', () => {
@@ -49,7 +52,7 @@ describe('renderHome — XSS resistance', () => {
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
   });
 
-  it('does NOT produce an <a href> for invalid repo names', () => {
+  it('does NOT produce an external <a href> for invalid repo names', () => {
     // safeGithubRepoUrl rejects all three malicious names, so each renders as
     // a <span class="repo-name unsafe"> instead.
     expect(html).toContain('<span class="repo-name unsafe">');
@@ -59,23 +62,23 @@ describe('renderHome — XSS resistance', () => {
     expect(html).not.toMatch(/href="[^"]*onerror/i);
   });
 
-  it('still produces a valid link for a well-formed repo name', () => {
+  it('still links to /r/owner/name for a well-formed repo name', () => {
+    const okRow = {
+      full_name: 'jpettitt/weather-radar-card',
+      kind: 'plugin',
+      stars: 100,
+      downloads_30d: 0,
+      star_delta_30d: 0,
+      top_version_30d: null,
+    };
     const safeHtml = renderHome({
       repoCount: 1,
-      topByStars: [
-        {
-          full_name: 'jpettitt/weather-radar-card',
-          kind: 'plugin',
-          stars: 100,
-          downloads_30d: 0,
-          star_delta_30d: 0,
-          top_version_30d: null,
-        },
-      ],
-      topByDownloads30d: [],
+      topByStars: [okRow],
+      topByDownloads30d: [okRow],
+      trendingByStars: [],
+      newArrivals: [],
+      recentlyUpdated: [],
     });
-    expect(safeHtml).toContain(
-      '<a href="https://github.com/jpettitt/weather-radar-card" target="_blank"',
-    );
+    expect(safeHtml).toContain('<a href="/r/jpettitt/weather-radar-card">');
   });
 });

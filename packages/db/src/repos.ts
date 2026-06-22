@@ -106,3 +106,37 @@ export function markScraped(db: Db, repoId: number): void {
     .prepare('UPDATE repos SET last_scraped_at = ? WHERE id = ?')
     .run(new Date().toISOString(), repoId);
 }
+
+export interface CategoryCount {
+  kind: string;
+  n: number;
+}
+
+export function categoryCounts(db: Db): CategoryCount[] {
+  return db.raw
+    .prepare<[], CategoryCount>(
+      'SELECT kind, COUNT(*) AS n FROM repos GROUP BY kind ORDER BY n DESC',
+    )
+    .all();
+}
+
+/**
+ * `q` is a user-supplied substring. We use LIKE rather than FTS5 — for ~3k
+ * rows it's instantaneous, and we avoid maintaining a separate FTS index.
+ * Promote to FTS5 if the catalogue grows past ~50k.
+ *
+ * The `escape '\\'` clause lets us literal-match user-supplied % and _ chars
+ * by escaping them before binding.
+ */
+export function searchRepos(db: Db, q: string, limit = 30): Repo[] {
+  const escaped = q.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const needle = `%${escaped}%`;
+  return db.raw
+    .prepare<[string, string, number], Repo>(
+      `SELECT * FROM repos
+        WHERE (full_name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
+        ORDER BY full_name
+        LIMIT ?`,
+    )
+    .all(needle, needle, limit);
+}

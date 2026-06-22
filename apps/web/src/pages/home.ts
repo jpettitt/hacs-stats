@@ -1,136 +1,106 @@
-import { escapeHtml, safeGithubRepoUrl } from '../sanitize.js';
+import { type RowForList, fmtInt, kindLabel, renderLeaderTable, repoLink } from '../components.js';
+import { escapeHtml } from '../sanitize.js';
 
-export interface LeaderRow {
-  full_name: string;
-  kind: string;
-  stars: number;
-  downloads_30d: number;
-  star_delta_30d: number;
-  top_version_30d: string | null;
-}
+export type LeaderRow = RowForList;
 
 export interface HomeProps {
   repoCount: number;
   topByStars: LeaderRow[];
   topByDownloads30d: LeaderRow[];
+  trendingByStars: LeaderRow[];
+  newArrivals: LeaderRow[];
+  recentlyUpdated: LeaderRow[];
 }
 
-const KIND_LABEL: Record<string, string> = {
-  integration: 'Integration',
-  plugin: 'Plugin',
-  theme: 'Theme',
-  appdaemon: 'AppDaemon',
-  netdaemon: 'NetDaemon',
-  python_script: 'Python script',
-  template: 'Template',
-};
-
-function fmtInt(n: number): string {
-  return n.toLocaleString('en-US');
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  return escapeHtml(iso.slice(0, 10));
 }
 
-function fmtDelta(n: number): string {
-  if (n === 0) return '—';
-  const sign = n > 0 ? '+' : '';
-  return `${sign}${fmtInt(n)}`;
-}
+export function renderHome(props: HomeProps): string {
+  const {
+    repoCount,
+    topByStars,
+    topByDownloads30d,
+    trendingByStars,
+    newArrivals,
+    recentlyUpdated,
+  } = props;
 
-/**
- * Render an `<a href>` only when the full_name passes the strict GitHub-name
- * validator. If it doesn't, fall back to text — better a missing link than
- * an attacker-controlled URL.
- */
-function repoLink(fullName: string): string {
-  const url = safeGithubRepoUrl(fullName);
-  const safeText = escapeHtml(fullName);
-  if (!url) return `<span class="repo-name unsafe">${safeText}</span>`;
-  // url is constructed from validated parts, no escaping needed in the href.
-  return `<a href="${url}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
-}
+  const trendingNote =
+    trendingByStars.length === 0
+      ? '<p class="muted small">No 7-day star deltas yet. After two daily scrapes, repos that picked up new stars will appear here.</p>'
+      : '';
 
-function leaderTable(
-  rows: LeaderRow[],
-  valueLabel: string,
-  formatValue: (r: LeaderRow) => string,
-): string {
-  const body = rows
-    .map(
-      (r) => `
-      <tr>
-        <td>${repoLink(r.full_name)}</td>
-        <td class="kind">${escapeHtml(KIND_LABEL[r.kind] ?? r.kind)}</td>
-        <td class="num">${formatValue(r)}</td>
-        <td class="num small">${fmtDelta(r.star_delta_30d)} ★ / 30d</td>
-      </tr>`,
-    )
-    .join('');
   return `
-    <table>
-      <thead>
-        <tr><th>Repo</th><th>Kind</th><th>${escapeHtml(valueLabel)}</th><th>Stars Δ30d</th></tr>
-      </thead>
-      <tbody>${body}</tbody>
-    </table>`;
-}
+    <p class="lead">Public download &amp; star stats for the Home Assistant Community Store.</p>
 
-export function renderHome({ repoCount, topByStars, topByDownloads30d }: HomeProps): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>hacs-stats</title>
-  <style>
-    :root { color-scheme: light dark; }
-    body { font: 16px/1.5 system-ui, sans-serif; max-width: 64rem; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
-    @media (prefers-color-scheme: dark) {
-      body { background: #111; color: #eee; }
-      .stat, table { background: #1c1c1c; }
-      th { background: #222; }
-      a { color: #7ab8ff; }
-    }
-    h1 { margin: 0 0 .25rem; }
-    .lead { color: #555; margin-top: 0; }
-    .badge { display: inline-block; background: #fb923c; color: #1a1a1a; padding: .15rem .5rem; border-radius: .25rem; font-size: .8rem; font-weight: 600; vertical-align: middle; }
-    .stat { margin: 1.5rem 0; padding: 1rem 1.25rem; background: #f3f4f6; border-radius: .5rem; }
-    section { margin: 2rem 0; }
-    table { width: 100%; border-collapse: collapse; background: #fafafa; border-radius: .5rem; overflow: hidden; }
-    th, td { padding: .5rem .75rem; text-align: left; border-bottom: 1px solid rgba(128,128,128,.2); }
-    th { background: #eee; font-size: .85rem; text-transform: uppercase; letter-spacing: .02em; }
-    tr:last-child td { border-bottom: none; }
-    td.kind { color: #666; font-size: .9rem; }
-    td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    td.small { font-size: .85rem; color: #777; }
-    footer { margin: 3rem 0 1rem; color: #888; font-size: .85rem; }
-    code { background: rgba(128,128,128,.15); padding: .1rem .3rem; border-radius: .25rem; }
-  </style>
-</head>
-<body>
-  <h1>hacs-stats <span class="badge">unofficial</span></h1>
-  <p class="lead">Public download &amp; star stats for the Home Assistant Community Store.</p>
+    <div class="stat">Tracking <strong>${escapeHtml(fmtInt(repoCount))}</strong> repositories across the HACS catalogue.</div>
 
-  <div class="stat">Tracking <strong>${fmtInt(repoCount)}</strong> repositories.</div>
+    <section>
+      <h2>Top by stars</h2>
+      ${renderLeaderTable(topByStars, {
+        valueLabel: 'Stars',
+        formatValue: (r) => fmtInt(r.stars),
+        showStarDelta: false,
+      })}
+    </section>
 
-  <section>
-    <h2>Top by stars</h2>
-    ${leaderTable(topByStars, 'Stars', (r) => fmtInt(r.stars))}
-  </section>
+    <section>
+      <h2>Top by 30-day downloads</h2>
+      <p class="lead small">
+        Sum of HACS-asset download deltas over the last 30 days. Until two
+        daily snapshots have accumulated, values here will be zero.
+      </p>
+      ${renderLeaderTable(topByDownloads30d, {
+        valueLabel: '30d Δ downloads',
+        formatValue: (r) => fmtInt(r.downloads_30d),
+      })}
+    </section>
 
-  <section>
-    <h2>Top by 30-day downloads</h2>
-    <p class="lead small">
-      Sum of HACS-asset download deltas over the last 30 days.
-      Until we have ≥ 2 daily snapshots, every value here will be 0 — that's
-      expected on day 1.
-    </p>
-    ${leaderTable(topByDownloads30d, '30d Δ downloads', (r) => fmtInt(r.downloads_30d))}
-  </section>
+    <section>
+      <h2>Trending (7-day star delta)</h2>
+      ${trendingNote}
+      ${renderLeaderTable(trendingByStars, {
+        valueLabel: 'Stars Δ 7d',
+        formatValue: (r) => `+${fmtInt(r.star_delta_30d)}`,
+        showStarDelta: false,
+      })}
+    </section>
 
-  <footer>
-    Data sourced from public GitHub APIs. Downloads are a proxy for installs;
-    Home Assistant does not phone home. Not affiliated with HACS.
-    See the methodology in <code>ARCHITECTURE.md</code>.
-  </footer>
-</body>
-</html>`;
+    <section>
+      <h2>Recently active</h2>
+      <p class="lead small">Most recent commit on the default branch.</p>
+      <table>
+        <thead><tr><th>Repo</th><th>Kind</th><th class="num">Last commit</th><th class="num">Stars</th></tr></thead>
+        <tbody>${recentlyUpdated
+          .map(
+            (r) => `<tr>
+              <td>${repoLink(r.full_name)}</td>
+              <td class="kind">${kindLabel(r.kind)}</td>
+              <td class="num small">${fmtDate(r.last_commit_at)}</td>
+              <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
+            </tr>`,
+          )
+          .join('')}</tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>New arrivals</h2>
+      <p class="lead small">Recently added to the HACS default lists.</p>
+      <table>
+        <thead><tr><th>Repo</th><th>Kind</th><th class="num">First seen</th></tr></thead>
+        <tbody>${newArrivals
+          .map(
+            (r) => `<tr>
+              <td>${repoLink(r.full_name)}</td>
+              <td class="kind">${kindLabel(r.kind)}</td>
+              <td class="num small">${fmtDate(r.first_seen_at)}</td>
+            </tr>`,
+          )
+          .join('')}</tbody>
+      </table>
+    </section>
+  `;
 }

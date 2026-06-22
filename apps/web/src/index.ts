@@ -1,7 +1,15 @@
-import { openDb, repos, resolveDatabasePath } from '@hacs-stats/db';
+import { leaders, openDb, repos, resolveDatabasePath } from '@hacs-stats/db';
+import type { RepoKind } from '@hacs-stats/shared';
+import { REPO_KINDS } from '@hacs-stats/shared';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import { renderLayout } from './layout.js';
+import { renderAboutPage } from './pages/about.js';
+import { renderCategoriesIndex, renderCategoryPage } from './pages/category.js';
 import { renderHome } from './pages/home.js';
+import { renderRepoDetail } from './pages/repo.js';
+import { renderSearchPage } from './pages/search.js';
+import { isSafeRepoFullName } from './sanitize.js';
 
 const DATABASE_PATH = resolveDatabasePath();
 const PORT = Number(process.env.PORT ?? 3000);
@@ -10,58 +18,8 @@ const PORT = Number(process.env.PORT ?? 3000);
 // from the user-facing process. The scraper holds the only RW handle.
 const db = openDb({ path: DATABASE_PATH, mode: 'readonly' });
 
-interface LeaderRow {
-  full_name: string;
-  kind: string;
-  stars: number;
-  downloads_30d: number;
-  star_delta_30d: number;
-  top_version_30d: string | null;
-}
-
-function topByStars(limit = 20): LeaderRow[] {
-  return db.raw
-    .prepare<[number], LeaderRow>(`
-      SELECT
-        r.full_name, r.kind,
-        COALESCE(latest.stars, 0)              AS stars,
-        COALESCE(sc.total_downloads_30d, 0)    AS downloads_30d,
-        COALESCE(sc.star_delta_30d, 0)         AS star_delta_30d,
-        sc.top_version_30d                     AS top_version_30d
-      FROM repos r
-      LEFT JOIN stats_cache sc ON sc.repo_id = r.id
-      LEFT JOIN (
-        SELECT repo_id, stars
-        FROM repo_snapshots
-        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM repo_snapshots)
-      ) latest ON latest.repo_id = r.id
-      ORDER BY stars DESC
-      LIMIT ?
-    `)
-    .all(limit);
-}
-
-function topByDownloads30d(limit = 20): LeaderRow[] {
-  return db.raw
-    .prepare<[number], LeaderRow>(`
-      SELECT
-        r.full_name, r.kind,
-        COALESCE(latest.stars, 0)              AS stars,
-        COALESCE(sc.total_downloads_30d, 0)    AS downloads_30d,
-        COALESCE(sc.star_delta_30d, 0)         AS star_delta_30d,
-        sc.top_version_30d                     AS top_version_30d
-      FROM repos r
-      LEFT JOIN stats_cache sc ON sc.repo_id = r.id
-      LEFT JOIN (
-        SELECT repo_id, stars
-        FROM repo_snapshots
-        WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM repo_snapshots)
-      ) latest ON latest.repo_id = r.id
-      ORDER BY downloads_30d DESC, stars DESC
-      LIMIT ?
-    `)
-    .all(limit);
-}
+const VALID_KINDS = new Set<string>(REPO_KINDS);
+const isRepoKind = (s: string): s is RepoKind => VALID_KINDS.has(s);
 
 const app = new Hono();
 
@@ -93,23 +51,145 @@ app.use('*', async (c, next) => {
 
 app.get('/health', (c) => c.json({ ok: true }));
 
+app.get('/', (c) => {
+  const body = renderHome({
+    repoCount: repos.countRepos(db),
+    topByStars: leaders.topByStars(db, 15),
+    topByDownloads30d: leaders.topByDownloads30d(db, 15),
+    trendingByStars: leaders.trendingByStars(db, 15),
+    newArrivals: leaders.newArrivals(db, 10),
+    recentlyUpdated: leaders.recentlyUpdated(db, 10),
+  });
+  return c.html(
+    renderLayout({
+      title: 'hacs-stats — Home Assistant Community Store dashboard',
+      navActive: 'home',
+      body,
+    }),
+  );
+});
+
+app.get('/categories', (c) => {
+  const body = renderCategoriesIndex({ totals: repos.categoryCounts(db) });
+  return c.html(renderLayout({ title: 'Categories — hacs-stats', navActive: 'categories', body }));
+});
+
+app.get('/category/:kind', (c) => {
+  const kind = c.req.param('kind');
+  if (!isRepoKind(kind)) {
+    return c.html(
+      renderLayout({
+        title: 'Unknown category — hacs-stats',
+        navActive: 'categories',
+        body: `<p>Unknown category. <a href="/categories">See the list</a>.</p>`,
+      }),
+      404,
+    );
+  }
+  const body = renderCategoryPage({ kind, rows: leaders.topByCategory(db, kind, 100) });
+  return c.html(renderLayout({ title: `${kind} — hacs-stats`, navActive: 'categories', body }));
+});
+
+app.get('/r/:owner/:name', (c) => {
+  // Hono decodes path params for us. We still revalidate via the same allow-list
+  // used in `repoLink` — anything that wouldn't render as a link shouldn't load
+  // as a page either.
+  const owner = c.req.param('owner');
+  const name = c.req.param('name');
+  const fullName = `${owner}/${name}`;
+  if (!isSafeRepoFullName(fullName)) {
+    return c.html(
+      renderLayout({
+        title: 'Invalid repo — hacs-stats',
+        body: `<p>That doesn't look like a valid <code>owner/repo</code> identifier.</p>`,
+      }),
+      400,
+    );
+  }
+  const detail = leaders.repoDetailByFullName(db, fullName);
+  if (!detail) {
+    return c.html(
+      renderLayout({
+        title: 'Not found — hacs-stats',
+        body: `<p>We don't have a repo called <code>${fullName}</code> in our catalogue.</p>`,
+      }),
+      404,
+    );
+  }
+  const starsSeries = leaders
+    .repoStarsTimeseries(db, detail.id, 30)
+    .map((p) => ({ date: p.date, value: p.stars }));
+  const releaseRows = leaders.releaseDownloadsForRepo(db, detail.id, 25);
+  const body = renderRepoDetail({
+    detail: {
+      full_name: detail.full_name,
+      kind: detail.kind,
+      description: detail.description,
+      archived: detail.archived,
+      hacs_filename: detail.hacs_filename,
+      default_branch: detail.default_branch,
+      first_seen_at: detail.first_seen_at,
+      last_commit_at: detail.last_commit_at,
+      last_scraped_at: detail.last_scraped_at,
+      stars: detail.stars,
+      star_delta_7d: detail.star_delta_7d,
+      star_delta_30d: detail.star_delta_30d,
+      downloads_30d: detail.downloads_30d,
+      top_version_30d: detail.top_version_30d,
+    },
+    starsSeries,
+    releases: releaseRows,
+  });
+  return c.html(renderLayout({ title: `${fullName} — hacs-stats`, body }));
+});
+
+app.get('/search', (c) => {
+  const q = (c.req.query('q') ?? '').trim().slice(0, 100);
+  const hits = q.length >= 2 ? repos.searchRepos(db, q, 50) : [];
+  const body = renderSearchPage({
+    query: q,
+    hits: hits.map((r) => ({
+      full_name: r.full_name,
+      kind: r.kind,
+      description: r.description,
+    })),
+  });
+  return c.html(
+    renderLayout({
+      title: q ? `“${q}” — hacs-stats search` : 'Search — hacs-stats',
+      navActive: 'search',
+      searchValue: q,
+      body,
+    }),
+  );
+});
+
+app.get('/about', (c) =>
+  c.html(
+    renderLayout({ title: 'About — hacs-stats', navActive: 'about', body: renderAboutPage() }),
+  ),
+);
+
+// JSON API — surface enough for clients to render their own dashboards.
 app.get('/api/stats/overview', (c) =>
   c.json({
     repos: repos.countRepos(db),
-    topByStars: topByStars(20),
-    topByDownloads30d: topByDownloads30d(20),
+    topByStars: leaders.topByStars(db, 20),
+    topByDownloads30d: leaders.topByDownloads30d(db, 20),
   }),
 );
 
-app.get('/', (c) =>
-  c.html(
-    renderHome({
-      repoCount: repos.countRepos(db),
-      topByStars: topByStars(15),
-      topByDownloads30d: topByDownloads30d(15),
-    }),
-  ),
-);
+app.get('/api/repo/:owner/:name', (c) => {
+  const fullName = `${c.req.param('owner')}/${c.req.param('name')}`;
+  if (!isSafeRepoFullName(fullName)) return c.json({ error: 'invalid name' }, 400);
+  const detail = leaders.repoDetailByFullName(db, fullName);
+  if (!detail) return c.json({ error: 'not found' }, 404);
+  return c.json({
+    repo: detail,
+    starsSeries: leaders.repoStarsTimeseries(db, detail.id, 30),
+    releases: leaders.releaseDownloadsForRepo(db, detail.id, 25),
+  });
+});
 
 const server = serve({ fetch: app.fetch, port: PORT }, ({ port }) => {
   console.log(`hacs-stats web listening on http://localhost:${port}`);

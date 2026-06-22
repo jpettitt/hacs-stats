@@ -99,15 +99,33 @@ the math.
 
 Full dashboard, per the design.
 
-- [ ] Landing page: trending, top by category, recently updated, new arrivals
-- [ ] Repo detail page: charts (stars over time, downloads over time per release)
-- [ ] Search box (SQLite FTS5)
-- [ ] Category browse pages
-- [ ] About / methodology page explaining the proxies and caveats
-- [ ] RSS feed for new repos
-- [ ] Author page (all repos by a given owner)
+- [x] Shared layout module with nav (Home / Categories / About) and search box
+- [x] Landing page sections: top-by-stars, top-by-30d-downloads, trending
+      (7d star delta), recently active (last commit), new arrivals
+- [x] Repo detail page `/r/:owner/:name` with stat tiles, stars-over-time
+      SVG chart, metadata table, recent releases with downloads
+- [x] Search at `/search?q=` (LIKE, 100-char cap, 2-char minimum; LIKE
+      metacharacters escaped against user input)
+- [x] Categories index `/categories` + per-kind list `/category/:kind`
+- [x] About / methodology page explaining the download-count caveats
+- [x] JSON API: `/api/stats/overview`, `/api/repo/:owner/:name`
+- [x] Pure server-rendered SVG charts — no client JS, CSP stays strict
+- [x] `SNAPSHOT_DATE` env override on the scraper for dev-time history fakery
+- [x] All page interpolations route through `escapeHtml` or `repoLink`;
+      XSS regression in two new tables caught by existing test before push
 
-*Acceptance:* Public-readable site, fast, looks good.
+Deferred to Phase 5.1 / 6:
+
+- [ ] RSS feed for new repos
+- [ ] Author page (all repos by a given owner) — `/o/:owner`
+- [ ] Per-repo downloads chart (release-stacked area; needs more thinking)
+- [ ] SQLite FTS5 search (LIKE is fine for 3k rows; promote at ~50k)
+- [ ] Pagination on category / search pages
+
+*Acceptance:* ✅ Public-readable site with 7 routes, all returning expected
+status codes; 93 tests green including XSS smoke against three real
+payloads; CSP/Referrer/Permissions/X-Content-Type-Options headers live;
+home page renders 5 leaderboard sections in <100ms.
 
 ## Phase 6 — Discovery job
 
