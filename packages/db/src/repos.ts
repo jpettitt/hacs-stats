@@ -64,3 +64,37 @@ export function setHacsFilename(db: Db, input: SetHacsFilenameInput): void {
     .prepare('UPDATE repos SET hacs_filename = ?, last_scraped_at = ? WHERE full_name = ?')
     .run(input.hacsFilename, new Date().toISOString(), input.fullName);
 }
+
+export interface AllRepoIdent {
+  id: number;
+  owner: string;
+  name: string;
+  full_name: string;
+}
+
+export function listAllRepoIdents(db: Db, limit?: number): AllRepoIdent[] {
+  const sql = limit
+    ? 'SELECT id, owner, name, full_name FROM repos ORDER BY id LIMIT ?'
+    : 'SELECT id, owner, name, full_name FROM repos ORDER BY id';
+  const stmt = db.raw.prepare<number[], AllRepoIdent>(sql);
+  return limit ? stmt.all(limit) : stmt.all();
+}
+
+export function getReleasesEtag(db: Db, repoId: number): string | null {
+  const row = db.raw
+    .prepare<[number], { releases_etag: string | null }>(
+      'SELECT releases_etag FROM repos WHERE id = ?',
+    )
+    .get(repoId);
+  return row?.releases_etag ?? null;
+}
+
+export function setReleasesEtag(db: Db, repoId: number, etag: string | null): void {
+  db.raw.prepare('UPDATE repos SET releases_etag = ? WHERE id = ?').run(etag, repoId);
+}
+
+export function markScraped(db: Db, repoId: number): void {
+  db.raw
+    .prepare('UPDATE repos SET last_scraped_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), repoId);
+}

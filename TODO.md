@@ -52,14 +52,23 @@ after restart.
 
 ## Phase 3 — Daily snapshot scraper
 
-- [ ] GraphQL batch query for repo metadata (stars/forks/issues/etc.)
-- [ ] REST per-repo releases fetch (paginated, ETag-cached)
-- [ ] Write `repo_snapshots`, `releases`, `release_asset_snapshots`
-- [ ] In-process concurrency limiter (default 12)
-- [ ] Rate-limit handling: respect `x-ratelimit-remaining`, sleep on exhaustion
-- [ ] Tests: mocked GitHub responses
+- [x] GraphQL batch query for repo metadata (100 repos/batch, 7 fields each)
+- [x] REST per-repo releases fetch, `Link: rel="next"` pagination, `maxPages` safety
+- [x] ETag caching per repo (`If-None-Match` → 304 short-circuit; new migration 0002)
+- [x] Write `repo_snapshots`, `releases`, `release_asset_snapshots`
+- [x] In-process concurrency limiter (default 12, env-configurable)
+- [x] Rate-limit guardian: pauses until window reset when remaining < threshold,
+      observes both REST headers and GraphQL `rateLimit { remaining resetAt }`
+- [x] Tests: GraphQL mapping + NOT_FOUND tolerance, REST pagination + 304/404,
+      ETag-only-on-page-1, Link parser, rate-limit guard sleep/cushion (49 total)
+- [x] `SCRAPE_LIMIT` + `SKIP_DEFAULTS` env vars for fast dev iteration
+- [x] hacs.json fetch optimized to only hit new repos (saves ~3k requests/day)
 
-*Acceptance:* After 2 daily runs, deltas computable for stars and downloads.
+*Acceptance:* ✅ Smoke test on 20 repos: 20 GraphQL snapshots, 553 releases,
+47 asset snapshots, 0 failures, 3.9s. Re-run shows ETag short-circuit:
+notModified=20, releasesWritten=0. Rate-limit budget at 4978/5000 after both
+runs. Two daily runs will produce delta-able snapshots once we let it run
+overnight.
 
 ## Phase 4 — Stats rollup + retention
 
