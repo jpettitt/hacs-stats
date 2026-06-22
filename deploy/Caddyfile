@@ -1,0 +1,39 @@
+# /etc/caddy/Caddyfile on the VPS.
+#
+# The publicly-trusted certificate is served by Cloudflare's edge; this origin
+# uses a Caddy-issued self-signed cert (`tls internal`). Cloudflare's SSL/TLS
+# mode must be set to "Full" — NOT "Full (strict)" — so CF accepts the
+# self-signed cert without trying to verify it against a public CA.
+#
+# Why self-signed instead of a CF Origin Cert:
+#   - Zero dashboard steps; nothing to download, drop on disk, or rotate.
+#   - Caddy auto-renews the internal cert; no human in the loop.
+#   - Trade-off: CF can't detect an in-flight MITM between CF and origin.
+#     Acceptable for a public read-only stats site.
+
+hacs-stats.dev {
+	tls internal
+
+	encode zstd gzip
+
+	# Reverse proxy to the Node app on localhost. The Node process never binds
+	# to a public interface.
+	reverse_proxy 127.0.0.1:3000
+
+	# Trust Cloudflare's forwarded-for header so logs show the real client IP.
+	# CF publishes its IP ranges at https://www.cloudflare.com/ips/.
+	header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+
+	log {
+		output file /var/log/caddy/hacs-stats.log
+		format json
+	}
+}
+
+# .com → .dev redirect. CF page-rule handles this at the edge too, but the
+# server-side fallback covers the case where CF rules are disabled or someone
+# hits the origin directly.
+hacs-stats.com {
+	tls internal
+	redir https://hacs-stats.dev{uri} 308
+}

@@ -1,0 +1,252 @@
+import {
+  openDb,
+  releases,
+  repos,
+  resolveDatabasePath,
+  runMigrations,
+  snapshots,
+} from '@hacs-stats/db';
+import { mapLimit } from './concurrency.js';
+import { fetchRepoMetadataBatches } from './github-graphql.js';
+import { fetchReleases } from './github-releases.js';
+import { fetchAllDefaultLists } from './hacs-default.js';
+import { fetchHacsManifest, manifestFilename } from './hacs-manifest.js';
+import { RateLimitGuard } from './rate-limit.js';
+import { todayUtcIsoDate } from './snapshot-date.js';
+
+const DATABASE_PATH = resolveDatabasePath();
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const MANIFEST_CONCURRENCY = Number(process.env.MANIFEST_CONCURRENCY ?? 12);
+const RELEASES_CONCURRENCY = Number(process.env.RELEASES_CONCURRENCY ?? 12);
+const SCRAPE_LIMIT = process.env.SCRAPE_LIMIT ? Number(process.env.SCRAPE_LIMIT) : undefined;
+const SKIP_DEFAULTS = process.env.SKIP_DEFAULTS === '1';
+
+interface IngestResult {
+  defaults: { listEntries: number; reposAfter: number };
+  manifests: { fetched: number; withFilename: number; failures: number } | null;
+  metadata: { batchesFetched: number; snapshotsWritten: number; missing: number } | null;
+  releases: {
+    repos: number;
+    notModified: number;
+    missing: number;
+    releasesWritten: number;
+    assetSnapshotsWritten: number;
+    failures: number;
+  } | null;
+  rateLimit: { remaining: number };
+  durationSec: number;
+}
+
+async function ingest(): Promise<IngestResult> {
+  const t0 = process.hrtime.bigint();
+  const today = todayUtcIsoDate();
+  const guard = new RateLimitGuard();
+  const db = openDb({ path: DATABASE_PATH });
+
+  const migrations = runMigrations(db);
+  if (migrations.applied.length) {
+    console.log(`[scrape] applied ${migrations.applied.length} migration(s):`, migrations.applied);
+  }
+
+  // --- Phase 2 step: HACS default lists -----------------------------------
+  let listEntries = 0;
+  let manifests: IngestResult['manifests'] = null;
+  if (SKIP_DEFAULTS) {
+    console.log('[scrape] step 1/3 — SKIP_DEFAULTS=1, reusing existing repos table');
+  } else {
+    console.log('[scrape] step 1/3 — fetching HACS default lists');
+    const { entries, byKind } = await fetchAllDefaultLists({ bearerToken: GITHUB_TOKEN });
+    listEntries = entries.length;
+    console.log(
+      `[scrape]   ${entries.length} repos across ${Object.keys(byKind).length} categories`,
+    );
+
+    const upsertAll = db.raw.transaction((rows: typeof entries) => {
+      for (const r of rows) {
+        repos.upsertRepo(db, { owner: r.owner, name: r.name, kind: r.kind, source: 'default' });
+      }
+    });
+    upsertAll(entries);
+
+    // hacs.json fetch happens only for repos whose `hacs_filename` is still
+    // null (first-seen, or wiped). Refreshing it daily for 3k repos is wasted
+    // work — manifests rarely change.
+    const needManifest = entries.filter((e) => {
+      const row = repos.getRepoByFullName(db, e.fullName);
+      return row && row.hacs_filename === null;
+    });
+    console.log(
+      `[scrape]   fetching hacs.json for ${needManifest.length} new repos (concurrency ${MANIFEST_CONCURRENCY})`,
+    );
+
+    let fetched = 0;
+    let withFilename = 0;
+    let failures = 0;
+    const results = await mapLimit(needManifest, MANIFEST_CONCURRENCY, async (e) => {
+      const m = await fetchHacsManifest(e.fullName, { bearerToken: GITHUB_TOKEN });
+      const filename = manifestFilename(m);
+      repos.setHacsFilename(db, { fullName: e.fullName, hacsFilename: filename });
+      return filename;
+    });
+    for (const r of results) {
+      if (r.error) failures++;
+      else {
+        fetched++;
+        if (r.value !== null) withFilename++;
+      }
+    }
+    manifests = { fetched, withFilename, failures };
+  }
+
+  const allRepos = repos.listAllRepoIdents(db, SCRAPE_LIMIT);
+  console.log(
+    `[scrape]   ${allRepos.length} repos to snapshot${SCRAPE_LIMIT ? ` (SCRAPE_LIMIT=${SCRAPE_LIMIT})` : ''}`,
+  );
+
+  // Token is required for Phase 3 — GraphQL needs auth, REST releases at
+  // 60/hr unauthed gets us nowhere. Fail loud instead of silently skipping.
+  let metadata: IngestResult['metadata'] = null;
+  let releasesSummary: IngestResult['releases'] = null;
+  if (!GITHUB_TOKEN) {
+    console.warn('[scrape] step 2/3 — SKIPPED (no GITHUB_TOKEN; metadata + releases require auth)');
+  } else {
+    // --- Phase 3 step A: GraphQL repo metadata → repo_snapshots -----------
+    console.log(
+      `[scrape] step 2/3 — GraphQL metadata for ${allRepos.length} repos (batches of 100)`,
+    );
+    let batchesFetched = 0;
+    let snapshotsWritten = 0;
+    let missing = 0;
+    const fullNameToId = new Map(allRepos.map((r) => [r.full_name, r.id]));
+    const idents = allRepos.map((r) => ({ owner: r.owner, name: r.name }));
+
+    for await (const batch of fetchRepoMetadataBatches(idents, { token: GITHUB_TOKEN, guard })) {
+      batchesFetched++;
+      const writeBatch = db.raw.transaction((items: typeof batch) => {
+        for (const m of items) {
+          if (m.stars === null) {
+            missing++;
+            continue;
+          }
+          const repoId = fullNameToId.get(m.fullName);
+          if (repoId === undefined) continue;
+          snapshots.upsertRepoSnapshot(db, {
+            repoId,
+            snapshotDate: today,
+            stars: m.stars,
+            forks: m.forks ?? 0,
+            openIssues: m.openIssues ?? 0,
+            lastCommitAt: m.lastCommitAt,
+          });
+          snapshotsWritten++;
+        }
+      });
+      writeBatch(batch);
+    }
+    metadata = { batchesFetched, snapshotsWritten, missing };
+    console.log(`[scrape]   ${snapshotsWritten} snapshots written, ${missing} repos missing`);
+
+    // --- Phase 3 step B: REST releases → releases + release_asset_snapshots -
+    console.log(
+      `[scrape] step 3/3 — releases for ${allRepos.length} repos (concurrency ${RELEASES_CONCURRENCY})`,
+    );
+    let reposDone = 0;
+    let notModified = 0;
+    let missingRepos = 0;
+    let releasesWritten = 0;
+    let assetSnapshotsWritten = 0;
+    let failures = 0;
+    let lastLogged = 0;
+
+    const results = await mapLimit(allRepos, RELEASES_CONCURRENCY, async (r) => {
+      await guard.waitIfNeeded();
+      const etag = repos.getReleasesEtag(db, r.id);
+      const result = await fetchReleases({
+        owner: r.owner,
+        name: r.name,
+        token: GITHUB_TOKEN,
+        etag,
+        guard,
+      });
+      // All DB writes for this repo go inside a single tx — cheaper, and we
+      // don't want a half-written release row visible to the reader.
+      const writeOne = db.raw.transaction(() => {
+        if (result.kind === 'not-modified') return;
+        if (result.kind === 'missing') {
+          // Could mark archived; for now just leave the row alone. Phase 7
+          // adds a "stale / abandoned" classifier that'll handle this.
+          return;
+        }
+        if (result.etag !== undefined) repos.setReleasesEtag(db, r.id, result.etag);
+        for (const rel of result.releases ?? []) {
+          const releaseId = releases.upsertRelease(db, {
+            repoId: r.id,
+            tag: rel.tag,
+            publishedAt: rel.publishedAt,
+            isPrerelease: rel.isPrerelease,
+            htmlUrl: rel.htmlUrl,
+          });
+          releasesWritten++;
+          for (const asset of rel.assets) {
+            releases.upsertReleaseAssetSnapshot(db, {
+              releaseId,
+              assetName: asset.name,
+              snapshotDate: today,
+              downloadCount: asset.downloadCount,
+            });
+            assetSnapshotsWritten++;
+          }
+        }
+        repos.markScraped(db, r.id);
+      });
+      writeOne();
+      return result.kind;
+    });
+
+    for (const r of results) {
+      if (r.error) {
+        failures++;
+        continue;
+      }
+      reposDone++;
+      if (r.value === 'not-modified') notModified++;
+      if (r.value === 'missing') missingRepos++;
+      if (reposDone - lastLogged >= 250) {
+        console.log(
+          `[scrape]   …${reposDone}/${allRepos.length} (${notModified} cached, ${failures} failed)`,
+        );
+        lastLogged = reposDone;
+      }
+    }
+    releasesSummary = {
+      repos: reposDone,
+      notModified,
+      missing: missingRepos,
+      releasesWritten,
+      assetSnapshotsWritten,
+      failures,
+    };
+  }
+
+  const reposAfter = repos.countRepos(db);
+  db.close();
+
+  return {
+    defaults: { listEntries, reposAfter },
+    manifests,
+    metadata,
+    releases: releasesSummary,
+    rateLimit: { remaining: guard.snapshot().remaining },
+    durationSec: Number(process.hrtime.bigint() - t0) / 1e9,
+  };
+}
+
+ingest()
+  .then((r) => {
+    console.log('[scrape] done', { ...r, durationSec: Number(r.durationSec.toFixed(1)) });
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('[scrape] failed:', err);
+    process.exit(1);
+  });

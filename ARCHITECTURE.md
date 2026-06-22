@@ -4,9 +4,8 @@
 
 - Public dashboard of HACS plugin / integration / theme usage and trends.
 - Honest stats: never overcount, always label proxies as proxies.
-- Cheap to run (≤ $5/mo at expected scale).
-- Self-healing scraper that tolerates rate limits, transient GitHub errors,
-  and partial Cron-trigger CPU budgets.
+- Cheap and simple to run on a single VPS (≤ 1 GB RAM footprint).
+- Self-healing scraper that tolerates rate limits and transient GitHub errors.
 
 ## Non-goals (v1)
 
@@ -14,19 +13,20 @@
 - Realtime stats. Daily refresh is the resolution; nothing in HACS moves
   faster than that.
 - Authenticated user accounts. Read-only public site.
-- Comments, ratings, reviews. Out of scope — this is a data site, not a
-  community.
+- Comments, ratings, reviews. Out of scope — this is a data site.
+- Horizontal scaling. One VPS, one SQLite file. If we ever need more, we'll
+  port the db layer to Postgres — see "Future scaling" below.
 
 ## Data sources
 
-| Source                                    | Use                                         | Frequency |
-| ----------------------------------------- | ------------------------------------------- | --------- |
-| `github.com/hacs/default` repo            | Canonical list of HACS-indexed repos        | Daily     |
-| GitHub GraphQL API                        | Batched repo metadata (stars, forks, etc.) | Daily     |
-| GitHub REST `/releases`                   | Releases + per-asset download counts        | Daily     |
-| GitHub code search (`hacs.json` filename) | Discovery of unlisted custom repositories   | Weekly    |
-| Per-repo `hacs.json`                      | Which asset HACS pulls for that repo        | On change |
-| User submissions form                     | Long-tail custom repos                      | Continuous |
+| Source                                    | Use                                        | Frequency  |
+| ----------------------------------------- | ------------------------------------------ | ---------- |
+| `github.com/hacs/default` repo            | Canonical list of HACS-indexed repos       | Daily      |
+| GitHub GraphQL API                        | Batched repo metadata (stars, forks, etc.) | Daily      |
+| GitHub REST `/releases`                   | Releases + per-asset download counts       | Daily      |
+| GitHub code search (`hacs.json` filename) | Discovery of unlisted custom repositories  | Weekly     |
+| Per-repo `hacs.json`                      | Which asset HACS pulls for that repo       | On change  |
+| User submissions form                     | Long-tail custom repos                     | Continuous |
 
 ## The download-count problem
 
@@ -34,12 +34,11 @@ GitHub release download counts are **cumulative per asset, since the asset was
 uploaded**. There is no native way to ask "how many downloads happened in the
 last 30 days." Compounding this:
 
-1. A release often has 5-10 assets (`.zip`, `.tar.gz`, source archives, signed
-   builds, individual files). Summing them inflates the count — HACS only
-   downloads one specific file per release.
+1. A release often has 5-10 assets. Summing them inflates the count — HACS
+   only downloads one specific file per release.
 2. The asset HACS pulls is declared in the repo's `hacs.json` `filename` field.
-   For plugins (Lovelace cards), the convention is `<name>.js`. For
-   integrations, it's commonly the repo's `.zip` archive.
+   For plugins (Lovelace cards) the convention is `<name>.js`; for integrations
+   it's commonly the repo's `.zip` archive.
 
 **Our approach:**
 
@@ -50,44 +49,55 @@ last 30 days." Compounding this:
 - "Top version in the last 30 days" = the single release with the highest
   30-day delta on its HACS asset.
 
-This gives an honest picture of what HACS users are actively downloading right
-now, tolerant of users who don't upgrade immediately.
-
 ## System diagram
 
+```text
+                ┌──────────────────────────────────────────────┐
+                │  Cloudflare (CDN + TLS + DDoS)               │
+                │   ─ proxied DNS for hacs-stats.dev / .com    │
+                │   ─ edge cert publicly trusted (auto)        │
+                │   ─ SSL/TLS mode: Full (not strict)          │
+                │   ─ edge cache for static + select API paths │
+                └────────────────┬─────────────────────────────┘
+                                 │  HTTPS (Caddy self-signed,
+                                 │   accepted by CF "Full")
+                                 ▼
+                ┌──────────────────────────────────────────────┐
+                │  VPS (Ubuntu/Debian)                         │
+                │                                              │
+                │   Caddy :443  ──reverse proxy──▶ web :3000   │
+                │                                  (Node, Hono)│
+                │                                       │      │
+                │                                       ▼      │
+                │                                  SQLite file │
+                │                                       ▲      │
+                │                                       │      │
+                │   systemd timer (daily 04:00 UTC)            │
+                │     └─▶ scrape (Node script, one-shot)       │
+                │           ─ fetch HACS default lists         │
+                │           ─ GraphQL batch repo metadata      │
+                │           ─ REST releases + asset downloads  │
+                │           ─ write snapshots                  │
+                │           ─ run stats rollup                 │
+                │                                              │
+                │   systemd timer (weekly Mon 03:00 UTC)       │
+                │     └─▶ discover (Node script, one-shot)     │
+                │           ─ code-search `hacs.json`          │
+                │           ─ populate discovery_queue         │
+                └──────────────────────────────────────────────┘
 ```
-                  ┌─────────────────────────────────────────┐
-  Cron (daily) ─▶ │  scraper Worker                         │
-                  │   1. fetch HACS default lists            │
-                  │   2. enqueue repos into Queue            │
-                  │   3. consumer: GraphQL batch metadata    │
-                  │   4. consumer: REST releases + assets    │
-                  │   5. write snapshots to D1               │
-                  │   6. run stats rollup                    │
-                  └────────────────────┬────────────────────┘
-                                       │
-                                       ▼
-                  ┌─────────────────────────────────────────┐
-                  │  D1 (SQLite)                            │
-                  │   repos, repo_snapshots, releases,      │
-                  │   release_asset_snapshots, stats_cache, │
-                  │   discovery_queue                       │
-                  └────────────────────┬────────────────────┘
-                                       │
-                  ┌────────────────────▼────────────────────┐
-  Users ─────────▶│  frontend Worker (Pages + Hono)         │
-                  │   SSR dashboard, search, charts,        │
-                  │   /api/* for client filtering            │
-                  └─────────────────────────────────────────┘
 
-  Cron (weekly) ─▶ discovery Worker
-                     code-search `hacs.json` → discovery_queue
-```
+Two processes, both written in TypeScript, both run as the dedicated
+`hacs-stats` system user:
 
-The scraper uses **Cloudflare Queues** between steps 2 and 3-4 to chunk work
-across many short Worker invocations. This sidesteps the 30s (free) / 5min
-(paid) CPU limit per invocation: each repo is one queue message, processed
-independently.
+- **`hacs-stats-web.service`** — long-running Hono server bound to
+  `localhost:3000`. Caddy fronts it.
+- **`hacs-stats-scrape.timer`** + **`hacs-stats-scrape.service`** — one-shot
+  scrape job. systemd handles retries, logging to journald, and missed-run
+  recovery.
+
+No queue. No CPU limit. The scraper just iterates repos in-process with a
+small concurrency limiter (8-16 in-flight GitHub requests at a time).
 
 ## Database schema
 
@@ -158,27 +168,44 @@ CREATE INDEX idx_asset_snapshots_date ON release_asset_snapshots(snapshot_date);
 CREATE INDEX idx_repos_kind ON repos(kind);
 ```
 
+### SQLite pragmas
+
+Set on connection open:
+
+```sql
+PRAGMA journal_mode = WAL;       -- concurrent reads while scraper writes
+PRAGMA synchronous  = NORMAL;    -- WAL-safe; ~10x faster than FULL
+PRAGMA foreign_keys = ON;        -- enforce REFERENCES
+PRAGMA busy_timeout = 5000;      -- 5s wait before SQLITE_BUSY
+PRAGMA temp_store   = MEMORY;
+PRAGMA mmap_size    = 268435456; -- 256MB memory-mapped reads
+```
+
+The web process opens the DB read-only; the scraper opens read-write. WAL
+mode lets the web process keep serving snapshots-of-the-moment while the
+scraper is writing.
+
 ### Retention policy
 
 - `repo_snapshots`: daily for 90 days, then **collapse to weekly** (keep one
-  row per ISO week, drop the rest). Job runs nightly.
+  row per ISO week, drop the rest). Job runs nightly after the scrape.
 - `release_asset_snapshots`: daily for 30 days, then weekly. Same job.
 - `stats_cache`: rebuilt fresh nightly; no history needed.
 
-Without rollups, asset snapshots grow ~30k releases × 365 = 11M rows/year,
-which D1 can technically handle but slows queries. Rollups keep us comfortably
-under 1M rows.
+Without rollups, asset snapshots grow ~30k releases × 365 = 11M rows/year.
+SQLite handles that fine but disk + query time grow. Rollups keep us
+comfortably under 1M rows.
 
 ## Update cadence
 
-- **Daily** for everything in the default lists (~3k repos).
-- **Weekly** for the `hacs.json` code-search discovery worker.
-- **On-demand** refresh endpoint (rate-limited) for repo authors who want to
-  push the latest stats sooner.
+- **Daily** at 04:00 UTC for the default lists (~3k repos).
+- **Weekly** Mon 03:00 UTC for the `hacs.json` code-search discovery job.
+- **On-demand** via `sudo systemctl start hacs-stats-scrape.service` for
+  manual refresh during development or after a deploy.
 
 ### Rate-limit budget
 
-GitHub authenticated REST = 5000 req/hr; GraphQL = 5000 points/hr (with much
+GitHub authenticated REST = 5000 req/hr; GraphQL = 5000 points/hr (much
 better batching). For 3k repos:
 
 - GraphQL metadata: 30-60 requests (50-100 repos per query) — trivial.
@@ -186,80 +213,81 @@ better batching). For 3k repos:
 - Per-repo `hacs.json`: only fetched on first sight or when the repo's HEAD
   SHA changes — almost free in steady state.
 
-Plenty of headroom for a daily cadence. A GitHub **App** (15k/hr) is overkill
-at v1; revisit if we hit limits.
+A daily scrape fits comfortably in a single hour. A GitHub **App** (15k/hr)
+is overkill at v1; revisit if we ever need it.
 
-## Cloudflare-specific concerns
+## Cloudflare-as-CDN setup
 
-| Concern                  | Mitigation                                         |
-| ------------------------ | -------------------------------------------------- |
-| Worker CPU limit (30s)   | Queue + one-repo-per-message scraper consumers     |
-| D1 storage cap (10 GB)   | Snapshot rollups (daily → weekly after window)     |
-| D1 write throughput      | Batch inserts in single transactions per consumer  |
-| Cron-trigger reliability | Idempotent scrape: `snapshot_date` as PK component |
-| Secret storage           | `wrangler secret put GITHUB_TOKEN`                 |
+1. **DNS:** `hacs-stats.dev` A record → VPS public IP. Proxy status: **on**
+   (orange cloud). `hacs-stats.com` → page rule redirect to `.dev`.
+2. **SSL/TLS mode: Full** (NOT "Full (strict)"). Caddy serves a self-signed
+   cert at the origin via the `tls internal` directive; CF "Full" accepts it
+   without trying to verify against a public CA. No Origin Certificate to
+   generate, no Let's Encrypt, no key material on the VPS we have to rotate.
+   The publicly-trusted cert lives at the CF edge and is auto-managed.
+3. **Caching:** default page rules for static assets (`/static/*`,
+   `/favicon.ico`, etc.). API responses cached selectively via response
+   headers from the Node app (`Cache-Control: public, max-age=300` for the
+   leaderboard, `s-maxage` for the per-repo pages).
+4. **Bot fighting:** keep at default. Rate-limit rule for `/api/*` at 60
+   req/min/IP to make scraping painful but not block humans.
+
+Trade-off worth knowing: "Full" doesn't verify the origin cert, so CF can't
+detect a hypothetical MITM between CF and the VPS. Acceptable for a
+read-only public stats site; if we ever serve anything sensitive we revisit.
+
+See [deploy/README.md](./deploy/README.md) for click-by-click setup.
 
 ## Local development
 
-The whole stack must run on a developer machine **and keep its data between
-runs.** GitHub's API doesn't backfill download history, so re-bootstrapping
-from scratch loses real signal — local data needs to persist just like prod.
+Both apps run on plain Node. The DB is a single SQLite file at `./data/dev.db`.
 
-### How that works
-
-- `wrangler dev` runs both Workers locally. The Workers runtime is `workerd`,
-  the same engine used in production.
-- D1 has a **local mode** backed by a SQLite file in
-  `.wrangler/state/v3/d1/<binding>/<db>.sqlite`. Wrangler creates this on
-  first run and reuses it on every subsequent run.
-- `.wrangler/` is **gitignored but never auto-deleted**. The SQLite file
-  survives across `wrangler dev` restarts, machine restarts, and
-  `pnpm install`. It only disappears if a developer explicitly removes it.
-- Migrations apply identically to local and remote D1 via
-  `wrangler d1 migrations apply <db> --local` / `--remote`.
-- Queues have a local mode too (`wrangler dev` simulates them in-process), so
-  the chunked scraper flow works end-to-end on a laptop.
-
-### Dev-only scrape trigger
-
-In prod the scraper fires from Cron. In dev, waiting for Cron is painful, so
-the scraper Worker exposes a dev-only HTTP route:
-
-```http
-POST /admin/run-scrape       (only mounted when ENVIRONMENT === 'dev')
+```sh
+pnpm migrate       # apply ./packages/db/migrations/*.sql to ./data/dev.db
+pnpm dev:web       # nodemon/tsx watching apps/web/src/index.ts on :3000
+pnpm dev:scraper   # one-shot: runs the full scrape and exits
+pnpm seed          # one-shot: populates default lists (Phase 2+)
 ```
 
-Hitting it from `curl` enqueues the same work the Cron trigger would. Same
-code path, no separate dev-only logic.
+The `./data/` directory is gitignored but never auto-deleted, so snapshots
+accumulate across restarts. To wipe: `rm -rf ./data/`.
 
-### First-run seeding
+No Cloudflare account, no `wrangler`, no remote DB needed for local dev. The
+only external dependency is GitHub (a PAT in `.env`).
 
-A `pnpm seed` script does one full scrape against the real GitHub API
-(authenticated with the dev's own PAT, stored in `.dev.vars`), populating the
-local D1 with current data. From then on, the daily delta math works
-naturally — each subsequent `pnpm seed` (or `/admin/run-scrape` hit) writes
-another snapshot row keyed on today's date, and the dashboard becomes useful
-immediately rather than after 30 days of local cron.
+## Future scaling
 
-### Files
+The single-VPS shape works comfortably to ~50k tracked repos with daily
+snapshots. If we ever blow past that:
 
-```text
-.wrangler/         # local Wrangler state (D1 SQLite, KV, Queue) — gitignored
-.dev.vars          # local secrets (GITHUB_TOKEN, etc.) — gitignored
-wrangler.toml      # bindings, Cron triggers, env config — committed
-```
+- **DB:** swap `packages/db` from `better-sqlite3` to `postgres`. Schema is
+  vanilla SQL; the only meaningful changes are `INTEGER PRIMARY KEY` →
+  `BIGSERIAL` and a couple of column types. App code is insulated by the
+  query helpers.
+- **Web:** add a second Node process behind Caddy with a load-balanced
+  upstream. Or stay single-process and add a read-replica.
+- **Scraper:** parallelise across multiple machines by sharding on
+  `repo_id % N`.
+
+None of this is needed at v1.
 
 ## Resolved design decisions
 
-| Decision           | Choice                                                     |
-| ------------------ | ---------------------------------------------------------- |
-| Domain             | **hacs-stats.dev** (primary), `hacs-stats.com` redirects   |
-| Relationship       | Independent / unofficial. No HACS or HA endorsement claim. |
-| Hosting            | Cloudflare Workers + D1 + Pages + Queues + Cron Triggers   |
-| Backend language   | TypeScript                                                 |
-| Frontend scope v1  | Full dashboard (leaderboard, search, categories, charts)   |
-| Auth on the site   | None. Public read-only.                                    |
-| Local-dev data     | Persisted via `.wrangler/state/` SQLite (never auto-wiped) |
+| Decision          | Choice                                                      |
+| ----------------- | ----------------------------------------------------------- |
+| Domain            | **hacs-stats.dev** (primary), `hacs-stats.com` redirects    |
+| Relationship      | Independent / unofficial. No HACS or HA endorsement claim.  |
+| Hosting           | Single VPS (Ubuntu/Debian), Cloudflare in front for TLS/CDN |
+| Database          | SQLite via `better-sqlite3` (single-file, WAL mode)         |
+| Backend language  | TypeScript on Node 22+                                      |
+| HTTP framework    | Hono with `@hono/node-server`                               |
+| Scheduler         | `systemd` timer (no embedded cron)                          |
+| Reverse proxy     | Caddy with `tls internal` (self-signed), CF "Full" upstream |
+| Lint/format       | Biome (single binary)                                       |
+| Tests             | Vitest                                                      |
+| Frontend scope v1 | Full dashboard (leaderboard, search, categories, charts)    |
+| Auth on the site  | None. Public read-only.                                     |
+| Local-dev DB      | `./data/dev.db` (gitignored, persistent)                    |
 
 ## Remaining open questions
 
@@ -274,6 +302,6 @@ wrangler.toml      # bindings, Cron triggers, env config — committed
    scraping for 30 days. Plan: soft-launch the scraper ~30 days before any
    public announcement, and put a prominent "stats since YYYY-MM-DD" note on
    the site.
-4. **License.** MIT vs. Apache 2.0 vs. AGPL. MIT is the path of least
-   friction; AGPL would prevent a closed-source clone if that ever mattered.
-   Default: MIT unless there's a reason otherwise.
+4. **Backups.** SQLite is one file — easy to back up via `sqlite3 .backup`.
+   Where to store the backups (off-host) is TBD. Probably rsync to another
+   box on a daily systemd timer.
