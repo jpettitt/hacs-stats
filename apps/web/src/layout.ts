@@ -211,6 +211,29 @@ section > h2 { margin-bottom: .75rem; }
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 
+/* ---------- pagination ---------------------------------------------- */
+.pagination {
+  display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+  margin: 1rem 0;
+  padding: .5rem .75rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: .35rem;
+}
+.pagination .page-info { flex: 1; text-align: center; }
+.pagination a.page-link,
+.pagination .page-disabled,
+.pagination .page-current {
+  padding: .25rem .6rem; border-radius: .25rem;
+  border: 1px solid var(--border-strong);
+  text-decoration: none;
+  font-weight: 500;
+}
+.pagination a.page-link { background: var(--bg); color: var(--accent); }
+.pagination a.page-link:hover { background: var(--accent-bg); }
+.pagination .page-disabled { color: var(--text-dimmer); background: var(--bg); cursor: not-allowed; }
+.pagination .page-current { background: var(--accent); color: white; }
+
 /* ---------- filter bar (search results) ----------------------------- */
 .filter-bar {
   display: flex; gap: .5rem; flex-wrap: wrap; align-items: center;

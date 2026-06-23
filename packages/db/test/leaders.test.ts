@@ -272,9 +272,10 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     seedStats(db, b, { stars: 1 });
     seedStats(db, c, { stars: 1 });
 
-    const hits = leaders.searchRepos(db, { q: '' });
+    const result = leaders.searchRepos(db, { q: '' });
     // Expect ordering: aaa/two (no hacs_name → full_name "aaa") < Apple < Mango.
-    expect(hits.map((r) => r.full_name)).toEqual(['aaa/two', 'zoo/one', 'bee/three']);
+    expect(result.rows.map((r) => r.full_name)).toEqual(['aaa/two', 'zoo/one', 'bee/three']);
+    expect(result.total).toBe(3);
   });
 
   it('sort=stars orders by stars DESC', () => {
@@ -285,7 +286,7 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     seedStats(db, a, { stars: 50 });
     seedStats(db, b, { stars: 500 });
     seedStats(db, c, { stars: 100 });
-    const hits = leaders.searchRepos(db, { q: '', sort: 'stars' });
+    const hits = leaders.searchRepos(db, { q: '', sort: 'stars' }).rows;
     expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'c/c', 'a/a']);
   });
 
@@ -295,7 +296,7 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     const b = seedRepo(db, 'b', 'b');
     seedStats(db, a, { stars: 1, downloads_30d: 10 });
     seedStats(db, b, { stars: 1, downloads_30d: 500 });
-    const hits = leaders.searchRepos(db, { q: '', sort: 'downloads_30d' });
+    const hits = leaders.searchRepos(db, { q: '', sort: 'downloads_30d' }).rows;
     expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'a/a']);
   });
 
@@ -305,7 +306,7 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     const b = seedRepo(db, 'b', 'b');
     seedStats(db, a, { stars: 1, last_commit: '2026-06-01T00:00:00Z' });
     seedStats(db, b, { stars: 1, last_commit: '2026-06-20T00:00:00Z' });
-    const hits = leaders.searchRepos(db, { q: '', sort: 'recent' });
+    const hits = leaders.searchRepos(db, { q: '', sort: 'recent' }).rows;
     expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'a/a']);
   });
 
@@ -317,8 +318,9 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     seedStats(db, a, { stars: 1 });
     seedStats(db, b, { stars: 1 });
     seedStats(db, c, { stars: 1 });
-    const hits = leaders.searchRepos(db, { q: '', kind: 'plugin' });
-    expect(hits.map((r) => r.full_name).sort()).toEqual(['a/a', 'c/c']);
+    const result = leaders.searchRepos(db, { q: '', kind: 'plugin' });
+    expect(result.rows.map((r) => r.full_name).sort()).toEqual(['a/a', 'c/c']);
+    expect(result.total).toBe(2);
   });
 
   it('q matches against full_name OR hacs_name OR description', () => {
@@ -340,7 +342,7 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     seedStats(db, a, { stars: 1 });
     seedStats(db, b, { stars: 1 });
     seedStats(db, c, { stars: 1 });
-    const hits = leaders.searchRepos(db, { q: 'mushroom' });
+    const hits = leaders.searchRepos(db, { q: 'mushroom' }).rows;
     expect(hits.map((r) => r.full_name).sort()).toEqual([
       'descr/iption',
       'noname/repo',
@@ -353,7 +355,9 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     const a = seedRepo(db, 'a', 'a');
     seedStats(db, a, { stars: 1 });
     // Plain `%` must not match every row.
-    expect(leaders.searchRepos(db, { q: '%' })).toEqual([]);
+    const result = leaders.searchRepos(db, { q: '%' });
+    expect(result.rows).toEqual([]);
+    expect(result.total).toBe(0);
   });
 
   it('combines q + kind + sort correctly', () => {
@@ -368,8 +372,28 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
       q: 'mushroom',
       kind: 'plugin',
       sort: 'stars',
-    });
+    }).rows;
     expect(hits.map((r) => r.full_name)).toEqual(['mushroom/two', 'mushroom/one']);
+  });
+
+  it('paginates with limit + offset; total stays constant across pages', () => {
+    const db = freshDb();
+    for (let i = 0; i < 12; i++) {
+      const id = seedRepo(db, 'owner', `repo${String(i).padStart(2, '0')}`);
+      seedStats(db, id, { stars: 100 - i });
+    }
+    const p1 = leaders.searchRepos(db, { q: '', sort: 'stars', limit: 5, offset: 0 });
+    const p2 = leaders.searchRepos(db, { q: '', sort: 'stars', limit: 5, offset: 5 });
+    const p3 = leaders.searchRepos(db, { q: '', sort: 'stars', limit: 5, offset: 10 });
+    expect(p1.rows.length).toBe(5);
+    expect(p2.rows.length).toBe(5);
+    expect(p3.rows.length).toBe(2);
+    expect(p1.total).toBe(12);
+    expect(p2.total).toBe(12);
+    expect(p3.total).toBe(12);
+    // No overlap, and stars descending across pages.
+    const allStars = [...p1.rows, ...p2.rows, ...p3.rows].map((r) => r.stars);
+    expect(allStars).toEqual([...allStars].sort((a, b) => b - a));
   });
 });
 

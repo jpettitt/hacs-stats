@@ -83,6 +83,46 @@ function clip(s: string, max: number): string {
   return `${s.slice(0, max - 1).trimEnd()}…`;
 }
 
+/**
+ * Render Prev / Next + "Page X of Y, N results" navigation.
+ *
+ * `baseUrl` should already include any non-page query params (q, sort, kind,
+ * etc.) — the renderer appends `&page=N` or `?page=N` as appropriate.
+ * Hides the bar entirely when the result set fits on one page.
+ */
+export interface PaginationProps {
+  page: number; // 1-based
+  pageSize: number;
+  total: number;
+  baseUrl: string; // e.g. "/search?q=foo&sort=stars"
+}
+
+export function renderPagination(p: PaginationProps): string {
+  const lastPage = Math.max(1, Math.ceil(p.total / p.pageSize));
+  if (lastPage <= 1) {
+    return `<p class="muted small page-info">${p.total} result${p.total === 1 ? '' : 's'}.</p>`;
+  }
+  const sep = p.baseUrl.includes('?') ? '&' : '?';
+  const link = (n: number, label: string, current: boolean) => {
+    if (current) return `<span class="page-current">${escapeHtml(label)}</span>`;
+    const href = `${escapeHtml(p.baseUrl)}${sep}page=${n}`;
+    return `<a class="page-link" href="${href}">${escapeHtml(label)}</a>`;
+  };
+  const prev =
+    p.page > 1 ? link(p.page - 1, '← Prev', false) : `<span class="page-disabled">← Prev</span>`;
+  const next =
+    p.page < lastPage
+      ? link(p.page + 1, 'Next →', false)
+      : `<span class="page-disabled">Next →</span>`;
+  const start = (p.page - 1) * p.pageSize + 1;
+  const end = Math.min(p.total, p.page * p.pageSize);
+  return `<nav class="pagination" role="navigation" aria-label="Pagination">
+    ${prev}
+    <span class="page-info muted small">Showing ${start}–${end} of ${p.total} — page ${p.page} of ${lastPage}</span>
+    ${next}
+  </nav>`;
+}
+
 export function renderLeaderTable(rows: RowForList[], opts: LeaderTableOptions): string {
   const showDelta = opts.showStarDelta ?? true;
   const showDesc = opts.showDescription ?? true;

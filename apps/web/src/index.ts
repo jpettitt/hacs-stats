@@ -86,7 +86,20 @@ app.get('/category/:kind', (c) => {
       404,
     );
   }
-  const body = renderCategoryPage({ kind, rows: leaders.topByCategory(db, kind, 100) });
+  const page = parsePage(c.req.query('page'));
+  const pageData = leaders.topByCategory(
+    db,
+    kind,
+    CATEGORY_PAGE_SIZE,
+    (page - 1) * CATEGORY_PAGE_SIZE,
+  );
+  const body = renderCategoryPage({
+    kind,
+    rows: pageData.rows,
+    page,
+    pageSize: CATEGORY_PAGE_SIZE,
+    total: pageData.total,
+  });
   return c.html(renderLayout({ title: `${kind} — hacs-stats`, navActive: 'categories', body }));
 });
 
@@ -147,6 +160,17 @@ app.get('/r/:owner/:name', (c) => {
   return c.html(renderLayout({ title, body }));
 });
 
+const SEARCH_PAGE_SIZE = 50;
+const CATEGORY_PAGE_SIZE = 50;
+
+function parsePage(raw: string | undefined): number {
+  const n = Number(raw);
+  // 1-based, capped at 10_000 so a malformed ?page=9e99 can't cause LIMIT N OFFSET
+  // ridiculous-number computations. Anything fishy → page 1.
+  if (!Number.isInteger(n) || n < 1 || n > 10_000) return 1;
+  return n;
+}
+
 app.get('/search', (c) => {
   const q = (c.req.query('q') ?? '').trim().slice(0, 100);
   // sort / kind come from the user — validate against allowlists and fall
@@ -157,26 +181,31 @@ app.get('/search', (c) => {
     : 'name';
   const kindRaw = c.req.query('kind') ?? '';
   const kind = isRepoKind(kindRaw) ? kindRaw : undefined;
+  const page = parsePage(c.req.query('page'));
 
   // Run a query when the user gave us q, kind, or non-default sort. Empty-
   // everything renders the bare filter bar (no point listing all 3.3k repos
   // by default — that's what /categories is for).
   const shouldQuery = q.length >= 2 || kind !== undefined;
-  const hits = shouldQuery
+  const result = shouldQuery
     ? leaders.searchRepos(db, {
         q,
         sort,
         ...(kind !== undefined ? { kind } : {}),
-        limit: 100,
+        limit: SEARCH_PAGE_SIZE,
+        offset: (page - 1) * SEARCH_PAGE_SIZE,
       })
-    : [];
+    : { rows: [], total: 0 };
 
   const body = renderSearchPage({
     query: q,
     sort,
     kind,
     allKinds: [...REPO_KINDS],
-    hits,
+    hits: result.rows,
+    page,
+    pageSize: SEARCH_PAGE_SIZE,
+    total: result.total,
   });
   const title = q
     ? `“${q}” — hacs-stats search`

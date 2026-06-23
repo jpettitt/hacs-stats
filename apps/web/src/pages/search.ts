@@ -1,4 +1,10 @@
-import { type RowForList, fmtInt, kindLabel, renderLeaderTable } from '../components.js';
+import {
+  type RowForList,
+  fmtInt,
+  kindLabel,
+  renderLeaderTable,
+  renderPagination,
+} from '../components.js';
 import { escapeHtml } from '../sanitize.js';
 
 /** Available sort keys for the search UI — same set the DB layer accepts. */
@@ -19,6 +25,9 @@ export interface SearchPageProps {
   /** All allowed kinds, for the dropdown. */
   allKinds: string[];
   hits: RowForList[];
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 function dropdown(
@@ -80,10 +89,10 @@ export function renderSearchPage(props: SearchPageProps): string {
     return `<h2>Search</h2>${filterBar}<p class="muted" style="margin-top:1rem;">${msg}</p>`;
   }
 
-  const summary =
+  const summaryHeader =
     props.query.length > 0
-      ? `${props.hits.length} result${props.hits.length === 1 ? '' : 's'} for <code>${q}</code>${props.kind ? ` in <code>${escapeHtml(props.kind)}</code>` : ''}`
-      : `${props.hits.length} repos${props.kind ? ` in <code>${escapeHtml(props.kind)}</code>` : ''}, sorted by ${escapeHtml(labelForSort(props.sort).toLowerCase())}`;
+      ? `${props.total} result${props.total === 1 ? '' : 's'} for <code>${q}</code>${props.kind ? ` in <code>${escapeHtml(props.kind)}</code>` : ''}`
+      : `${props.total} repos${props.kind ? ` in <code>${escapeHtml(props.kind)}</code>` : ''}, sorted by ${escapeHtml(labelForSort(props.sort).toLowerCase())}`;
 
   const table = renderLeaderTable(props.hits, {
     valueLabel: labelForSort(props.sort),
@@ -93,10 +102,26 @@ export function renderSearchPage(props: SearchPageProps): string {
     showStarDelta: props.sort !== 'stars',
   });
 
+  // Build the base URL preserving every filter EXCEPT page (the pagination
+  // helper appends it). URLSearchParams gets the encoding right for us.
+  const baseParams = new URLSearchParams();
+  if (props.query) baseParams.set('q', props.query);
+  if (props.kind) baseParams.set('kind', props.kind);
+  if (props.sort !== 'name') baseParams.set('sort', props.sort);
+  const baseUrl = baseParams.toString() ? `/search?${baseParams.toString()}` : '/search';
+
+  const pagination = renderPagination({
+    page: props.page,
+    pageSize: props.pageSize,
+    total: props.total,
+    baseUrl,
+  });
+
   return `
     <h2>Search</h2>
     ${filterBar}
-    <p class="muted small" style="margin-top:1rem;">${summary}</p>
+    <p class="muted small" style="margin-top:1rem;">${summaryHeader}</p>
     ${table}
+    ${pagination}
   `;
 }

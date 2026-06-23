@@ -95,12 +95,22 @@ export function recentlyUpdated(db: Db, limit = 20): LeaderRow[] {
     .all(limit);
 }
 
-export function topByCategory(db: Db, kind: RepoKind, limit = 50): LeaderRow[] {
-  return db.raw
-    .prepare<[RepoKind, number], LeaderRow>(
-      `${LEADER_SELECT} WHERE r.kind = ? ORDER BY stars DESC LIMIT ?`,
+export interface CategoryPage {
+  rows: LeaderRow[];
+  total: number;
+}
+
+export function topByCategory(db: Db, kind: RepoKind, limit = 50, offset = 0): CategoryPage {
+  const rows = db.raw
+    .prepare<[RepoKind, number, number], LeaderRow>(
+      `${LEADER_SELECT} WHERE r.kind = ? ORDER BY stars DESC LIMIT ? OFFSET ?`,
     )
-    .all(kind, limit);
+    .all(kind, limit, offset);
+  const total =
+    db.raw
+      .prepare<[RepoKind], { n: number }>('SELECT COUNT(*) AS n FROM repos WHERE kind = ?')
+      .get(kind)?.n ?? 0;
+  return { rows, total };
 }
 
 export const SEARCH_SORTS = ['name', 'stars', 'downloads_30d', 'recent'] as const;
@@ -129,6 +139,13 @@ export interface SearchOptions {
   sort?: SearchSort;
   kind?: RepoKind;
   limit?: number;
+  offset?: number;
+}
+
+export interface SearchResult {
+  rows: LeaderRow[];
+  /** Total matching rows across all pages — used for "page X of Y". */
+  total: number;
 }
 
 /**
@@ -136,15 +153,18 @@ export interface SearchOptions {
  * description), optionally filtered by `kind`, ordered by `sort`.
  *
  * Returns the joined LeaderRow shape so the search page can render the
- * same columns as the home leaderboards (stars, downloads, deltas).
+ * same columns as the home leaderboards (stars, downloads, deltas), plus
+ * a `total` count for pagination — the second query reuses the WHERE
+ * clause but skips the JOINs to count cheaply.
  *
  * Special "empty q" semantics: when q is blank but kind or sort filters are
  * set, we return every matching row — gives users a way to browse "all
- * plugins by stars" via the search UI. Capped by `limit`.
+ * plugins by stars" via the search UI. Capped by `limit` + `offset`.
  */
-export function searchRepos(db: Db, opts: SearchOptions): LeaderRow[] {
+export function searchRepos(db: Db, opts: SearchOptions): SearchResult {
   const sort: SearchSort = opts.sort ?? 'name';
   const limit = opts.limit ?? 50;
+  const offset = opts.offset ?? 0;
   const escapedQ = opts.q.replace(/[\\%_]/g, (c) => `\\${c}`);
   const needle = `%${escapedQ}%`;
   const hasQ = opts.q.length > 0;
@@ -162,11 +182,19 @@ export function searchRepos(db: Db, opts: SearchOptions): LeaderRow[] {
     wheres.push('r.kind = ?');
     params.push(opts.kind);
   }
-  params.push(limit);
-
   const whereClause = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
-  const sql = `${LEADER_SELECT} ${whereClause} ORDER BY ${orderBy} LIMIT ?`;
-  return db.raw.prepare<unknown[], LeaderRow>(sql).all(...params);
+
+  // Cheap COUNT(*) — uses the same WHERE but no joins. ~5ms on 3.3k rows.
+  const total =
+    db.raw
+      .prepare<unknown[], { n: number }>(`SELECT COUNT(*) AS n FROM repos r ${whereClause}`)
+      .get(...params)?.n ?? 0;
+
+  const pageParams = [...params, limit, offset];
+  const sql = `${LEADER_SELECT} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+  const rows = db.raw.prepare<unknown[], LeaderRow>(sql).all(...pageParams);
+
+  return { rows, total };
 }
 
 export interface RepoDetail extends LeaderRow {
