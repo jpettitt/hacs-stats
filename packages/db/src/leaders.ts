@@ -103,6 +103,72 @@ export function topByCategory(db: Db, kind: RepoKind, limit = 50): LeaderRow[] {
     .all(kind, limit);
 }
 
+export const SEARCH_SORTS = ['name', 'stars', 'downloads_30d', 'recent'] as const;
+export type SearchSort = (typeof SEARCH_SORTS)[number];
+
+export const SEARCH_SORT_LABELS: Record<SearchSort, string> = {
+  name: 'Name (A-Z)',
+  stars: 'Stars (high to low)',
+  downloads_30d: 'Downloads 30d (high to low)',
+  recent: 'Recently active',
+};
+
+// ORDER BY clauses are NEVER interpolated from user input directly — the
+// `sort` parameter is validated against SEARCH_SORTS by the caller, and we
+// look the SQL up by key here. Same shape for kind further down.
+const ORDER_BY_BY_SORT: Record<SearchSort, string> = {
+  // SQLite treats "" as an identifier; the empty string literal is ''.
+  name: "COALESCE(NULLIF(r.hacs_name, ''), r.full_name) COLLATE NOCASE ASC",
+  stars: 'stars DESC, r.full_name COLLATE NOCASE ASC',
+  downloads_30d: 'downloads_30d DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
+  recent: 'latest.last_commit_at DESC, r.full_name COLLATE NOCASE ASC',
+};
+
+export interface SearchOptions {
+  q: string;
+  sort?: SearchSort;
+  kind?: RepoKind;
+  limit?: number;
+}
+
+/**
+ * Returns repos matching `q` (LIKE substring against full_name, hacs_name,
+ * description), optionally filtered by `kind`, ordered by `sort`.
+ *
+ * Returns the joined LeaderRow shape so the search page can render the
+ * same columns as the home leaderboards (stars, downloads, deltas).
+ *
+ * Special "empty q" semantics: when q is blank but kind or sort filters are
+ * set, we return every matching row — gives users a way to browse "all
+ * plugins by stars" via the search UI. Capped by `limit`.
+ */
+export function searchRepos(db: Db, opts: SearchOptions): LeaderRow[] {
+  const sort: SearchSort = opts.sort ?? 'name';
+  const limit = opts.limit ?? 50;
+  const escapedQ = opts.q.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const needle = `%${escapedQ}%`;
+  const hasQ = opts.q.length > 0;
+  const orderBy = ORDER_BY_BY_SORT[sort];
+
+  const wheres: string[] = [];
+  const params: unknown[] = [];
+  if (hasQ) {
+    wheres.push(
+      `(r.full_name LIKE ? ESCAPE '\\' OR r.hacs_name LIKE ? ESCAPE '\\' OR r.description LIKE ? ESCAPE '\\')`,
+    );
+    params.push(needle, needle, needle);
+  }
+  if (opts.kind !== undefined) {
+    wheres.push('r.kind = ?');
+    params.push(opts.kind);
+  }
+  params.push(limit);
+
+  const whereClause = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
+  const sql = `${LEADER_SELECT} ${whereClause} ORDER BY ${orderBy} LIMIT ?`;
+  return db.raw.prepare<unknown[], LeaderRow>(sql).all(...params);
+}
+
 export interface RepoDetail extends LeaderRow {
   hacs_filename: string | null;
   default_branch: string | null;

@@ -211,6 +211,36 @@ section > h2 { margin-bottom: .75rem; }
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 
+/* ---------- filter bar (search results) ----------------------------- */
+.filter-bar {
+  display: flex; gap: .5rem; flex-wrap: wrap; align-items: center;
+  padding: .75rem 1rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+}
+.filter-bar input[type="search"] {
+  flex: 1 1 16rem;
+  font: inherit; padding: .4rem .6rem;
+  border: 1px solid var(--border-strong); border-radius: .35rem;
+  background: var(--bg); color: var(--text);
+}
+.filter-bar select {
+  font: inherit; padding: .4rem .55rem;
+  border: 1px solid var(--border-strong); border-radius: .35rem;
+  background: var(--bg); color: var(--text);
+  min-width: 9rem;
+}
+.filter-bar button {
+  font: inherit; padding: .4rem .85rem;
+  border: 1px solid var(--border-strong); border-radius: .35rem;
+  background: var(--accent); color: white; cursor: pointer; font-weight: 600;
+}
+.filter-bar button:hover { background: var(--accent-hover); }
+.filter-bar input:focus, .filter-bar select:focus {
+  outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
+}
+
 /* ---------- tables --------------------------------------------------- */
 table {
   width: 100%; border-collapse: collapse;

@@ -242,7 +242,7 @@ describe('leaders.releaseDownloadsForRepo', () => {
   });
 });
 
-describe('repos.searchRepos', () => {
+describe('repos.searchRepos (legacy)', () => {
   it('finds matches by full_name substring', () => {
     const db = freshDb();
     seedRepo(db, 'piitaya', 'lovelace-mushroom');
@@ -257,6 +257,119 @@ describe('repos.searchRepos', () => {
     seedRepo(db, 'foo', 'normal');
     // User typed a % — must not match every row.
     expect(repos.searchRepos(db, '%').map((r) => r.full_name)).toEqual([]);
+  });
+});
+
+describe('leaders.searchRepos (with sort + kind filter)', () => {
+  it('defaults to name sort (case-insensitive, hacs_name preferred)', () => {
+    const db = freshDb();
+    const a = seedRepo(db, 'zoo', 'one'); // hacs_name "Apple"
+    const b = seedRepo(db, 'aaa', 'two'); // hacs_name null → sorts by full_name 'aaa/two'
+    const c = seedRepo(db, 'bee', 'three'); // hacs_name "Mango"
+    repos.setHacsManifest(db, { fullName: 'zoo/one', hacsFilename: null, hacsName: 'Apple' });
+    repos.setHacsManifest(db, { fullName: 'bee/three', hacsFilename: null, hacsName: 'Mango' });
+    seedStats(db, a, { stars: 1 });
+    seedStats(db, b, { stars: 1 });
+    seedStats(db, c, { stars: 1 });
+
+    const hits = leaders.searchRepos(db, { q: '' });
+    // Expect ordering: aaa/two (no hacs_name → full_name "aaa") < Apple < Mango.
+    expect(hits.map((r) => r.full_name)).toEqual(['aaa/two', 'zoo/one', 'bee/three']);
+  });
+
+  it('sort=stars orders by stars DESC', () => {
+    const db = freshDb();
+    const a = seedRepo(db, 'a', 'a');
+    const b = seedRepo(db, 'b', 'b');
+    const c = seedRepo(db, 'c', 'c');
+    seedStats(db, a, { stars: 50 });
+    seedStats(db, b, { stars: 500 });
+    seedStats(db, c, { stars: 100 });
+    const hits = leaders.searchRepos(db, { q: '', sort: 'stars' });
+    expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'c/c', 'a/a']);
+  });
+
+  it('sort=downloads_30d orders by total_downloads_30d DESC', () => {
+    const db = freshDb();
+    const a = seedRepo(db, 'a', 'a');
+    const b = seedRepo(db, 'b', 'b');
+    seedStats(db, a, { stars: 1, downloads_30d: 10 });
+    seedStats(db, b, { stars: 1, downloads_30d: 500 });
+    const hits = leaders.searchRepos(db, { q: '', sort: 'downloads_30d' });
+    expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'a/a']);
+  });
+
+  it('sort=recent orders by latest.last_commit_at DESC', () => {
+    const db = freshDb();
+    const a = seedRepo(db, 'a', 'a');
+    const b = seedRepo(db, 'b', 'b');
+    seedStats(db, a, { stars: 1, last_commit: '2026-06-01T00:00:00Z' });
+    seedStats(db, b, { stars: 1, last_commit: '2026-06-20T00:00:00Z' });
+    const hits = leaders.searchRepos(db, { q: '', sort: 'recent' });
+    expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'a/a']);
+  });
+
+  it('kind filter narrows results to that category', () => {
+    const db = freshDb();
+    const a = seedRepo(db, 'a', 'a', 'plugin');
+    const b = seedRepo(db, 'b', 'b', 'integration');
+    const c = seedRepo(db, 'c', 'c', 'plugin');
+    seedStats(db, a, { stars: 1 });
+    seedStats(db, b, { stars: 1 });
+    seedStats(db, c, { stars: 1 });
+    const hits = leaders.searchRepos(db, { q: '', kind: 'plugin' });
+    expect(hits.map((r) => r.full_name).sort()).toEqual(['a/a', 'c/c']);
+  });
+
+  it('q matches against full_name OR hacs_name OR description', () => {
+    const db = freshDb();
+    const a = seedRepo(db, 'piitaya', 'lovelace-mushroom');
+    const b = seedRepo(db, 'noname', 'repo');
+    const c = seedRepo(db, 'descr', 'iption');
+    repos.setHacsManifest(db, {
+      fullName: 'noname/repo',
+      hacsFilename: null,
+      hacsName: 'Mushroom Helper',
+    });
+    repos.updateRepoMetadata(db, {
+      repoId: c,
+      description: 'a mushroom helper',
+      archived: false,
+      defaultBranch: 'main',
+    });
+    seedStats(db, a, { stars: 1 });
+    seedStats(db, b, { stars: 1 });
+    seedStats(db, c, { stars: 1 });
+    const hits = leaders.searchRepos(db, { q: 'mushroom' });
+    expect(hits.map((r) => r.full_name).sort()).toEqual([
+      'descr/iption',
+      'noname/repo',
+      'piitaya/lovelace-mushroom',
+    ]);
+  });
+
+  it('escapes LIKE metacharacters in q', () => {
+    const db = freshDb();
+    const a = seedRepo(db, 'a', 'a');
+    seedStats(db, a, { stars: 1 });
+    // Plain `%` must not match every row.
+    expect(leaders.searchRepos(db, { q: '%' })).toEqual([]);
+  });
+
+  it('combines q + kind + sort correctly', () => {
+    const db = freshDb();
+    const a = seedRepo(db, 'mushroom', 'one', 'plugin');
+    const b = seedRepo(db, 'mushroom', 'two', 'plugin');
+    const c = seedRepo(db, 'mushroom', 'three', 'integration');
+    seedStats(db, a, { stars: 100 });
+    seedStats(db, b, { stars: 500 });
+    seedStats(db, c, { stars: 999 });
+    const hits = leaders.searchRepos(db, {
+      q: 'mushroom',
+      kind: 'plugin',
+      sort: 'stars',
+    });
+    expect(hits.map((r) => r.full_name)).toEqual(['mushroom/two', 'mushroom/one']);
   });
 });
 

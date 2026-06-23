@@ -149,19 +149,43 @@ app.get('/r/:owner/:name', (c) => {
 
 app.get('/search', (c) => {
   const q = (c.req.query('q') ?? '').trim().slice(0, 100);
-  const hits = q.length >= 2 ? repos.searchRepos(db, q, 50) : [];
+  // sort / kind come from the user — validate against allowlists and fall
+  // back to defaults rather than blindly passing strings into SQL.
+  const sortRaw = c.req.query('sort') ?? '';
+  const sort = (leaders.SEARCH_SORTS as readonly string[]).includes(sortRaw)
+    ? (sortRaw as leaders.SearchSort)
+    : 'name';
+  const kindRaw = c.req.query('kind') ?? '';
+  const kind = isRepoKind(kindRaw) ? kindRaw : undefined;
+
+  // Run a query when the user gave us q, kind, or non-default sort. Empty-
+  // everything renders the bare filter bar (no point listing all 3.3k repos
+  // by default — that's what /categories is for).
+  const shouldQuery = q.length >= 2 || kind !== undefined;
+  const hits = shouldQuery
+    ? leaders.searchRepos(db, {
+        q,
+        sort,
+        ...(kind !== undefined ? { kind } : {}),
+        limit: 100,
+      })
+    : [];
+
   const body = renderSearchPage({
     query: q,
-    hits: hits.map((r) => ({
-      full_name: r.full_name,
-      hacs_name: r.hacs_name,
-      kind: r.kind,
-      description: r.description,
-    })),
+    sort,
+    kind,
+    allKinds: [...REPO_KINDS],
+    hits,
   });
+  const title = q
+    ? `“${q}” — hacs-stats search`
+    : kind
+      ? `${kind} — hacs-stats search`
+      : 'Search — hacs-stats';
   return c.html(
     renderLayout({
-      title: q ? `“${q}” — hacs-stats search` : 'Search — hacs-stats',
+      title,
       navActive: 'search',
       searchValue: q,
       body,
