@@ -17,6 +17,14 @@ export interface LeaderRow {
   description: string | null;
   archived: number;
   is_fork: number;
+  /** ISO string from the last successful scrape, or null if never scraped. */
+  last_scraped_at: string | null;
+  /** pending | active | offline | removed — lifecycle state. Listings filter
+   * to 'active' by default; /pending and /removed surface the others. */
+  state: string;
+  /** ISO timestamp of first failure in the current failure run (for offline
+   * → removed countdown). Null when not in a failure state. */
+  first_failure_at: string | null;
   stars: number;
   /** Cumulative downloads on the repo's latest non-prerelease release. */
   latest_release_downloads: number;
@@ -40,7 +48,7 @@ export interface LeaderRow {
 const LEADER_SELECT = `
   SELECT
     r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork,
-    r.first_seen_at,
+    r.first_seen_at, r.last_scraped_at, r.state, r.first_failure_at,
     COALESCE(latest.stars, 0)                         AS stars,
     latest.last_commit_at,
     COALESCE(sc.latest_release_downloads, 0)          AS latest_release_downloads,
@@ -61,16 +69,22 @@ const LEADER_SELECT = `
   ) latest ON latest.repo_id = r.id
 `;
 
+// All default leaderboard queries filter to state='active' — pending /
+// offline / removed repos have their own pages.
+const ACTIVE_ONLY = "r.state = 'active'";
+
 export function topByStars(db: Db, limit = 20): LeaderRow[] {
   return db.raw
-    .prepare<[number], LeaderRow>(`${LEADER_SELECT} ORDER BY stars DESC LIMIT ?`)
+    .prepare<[number], LeaderRow>(
+      `${LEADER_SELECT} WHERE ${ACTIVE_ONLY} ORDER BY stars DESC LIMIT ?`,
+    )
     .all(limit);
 }
 
 export function topByDownloads30d(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
-      `${LEADER_SELECT} ORDER BY downloads_30d DESC, stars DESC LIMIT ?`,
+      `${LEADER_SELECT} WHERE ${ACTIVE_ONLY} ORDER BY downloads_30d DESC, stars DESC LIMIT ?`,
     )
     .all(limit);
 }
@@ -83,7 +97,7 @@ export function topByDownloads30d(db: Db, limit = 20): LeaderRow[] {
 export function topByLatestReleaseDownloads(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
-      `${LEADER_SELECT} ORDER BY latest_release_downloads DESC, stars DESC LIMIT ?`,
+      `${LEADER_SELECT} WHERE ${ACTIVE_ONLY} ORDER BY latest_release_downloads DESC, stars DESC LIMIT ?`,
     )
     .all(limit);
 }
@@ -92,7 +106,7 @@ export function trendingByStars(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
       `${LEADER_SELECT}
-        WHERE COALESCE(sc.star_delta_7d, 0) > 0
+        WHERE ${ACTIVE_ONLY} AND COALESCE(sc.star_delta_7d, 0) > 0
         ORDER BY star_delta_7d DESC, stars DESC
         LIMIT ?`,
     )
@@ -100,14 +114,14 @@ export function trendingByStars(db: Db, limit = 20): LeaderRow[] {
 }
 
 /**
- * Recently added to the HACS default lists — first_seen_at is set when our
- * scraper first sees a repo. On day 1 every repo has the same value, so this
- * is most useful on day 2+.
+ * Recently added — first_seen_at is set when our scraper first sees a repo.
+ * Filtered to state='active' so pending submissions don't show until their
+ * first successful scrape.
  */
 export function newArrivals(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
-      `${LEADER_SELECT} ORDER BY r.first_seen_at DESC, r.id DESC LIMIT ?`,
+      `${LEADER_SELECT} WHERE ${ACTIVE_ONLY} ORDER BY r.first_seen_at DESC, r.id DESC LIMIT ?`,
     )
     .all(limit);
 }
@@ -120,9 +134,34 @@ export function recentlyUpdated(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
       `${LEADER_SELECT}
-        WHERE latest.last_commit_at IS NOT NULL
+        WHERE ${ACTIVE_ONLY} AND latest.last_commit_at IS NOT NULL
         ORDER BY latest.last_commit_at DESC
         LIMIT ?`,
+    )
+    .all(limit);
+}
+
+/**
+ * Repos awaiting their first successful scrape. Surfaced on /pending so the
+ * admin (and submitters) can see what's queued. Most useful right after a
+ * batch of accepts via /admin/queue.
+ */
+export function pendingRepos(db: Db, limit = 200): LeaderRow[] {
+  return db.raw
+    .prepare<[number], LeaderRow>(
+      `${LEADER_SELECT} WHERE r.state = 'pending' ORDER BY r.first_seen_at DESC LIMIT ?`,
+    )
+    .all(limit);
+}
+
+/**
+ * Repos that were once active but have been unreachable for 30+ days.
+ * Surfaced on /removed; default listings never show them.
+ */
+export function removedRepos(db: Db, limit = 200): LeaderRow[] {
+  return db.raw
+    .prepare<[number], LeaderRow>(
+      `${LEADER_SELECT} WHERE r.state = 'removed' ORDER BY r.first_failure_at DESC LIMIT ?`,
     )
     .all(limit);
 }
@@ -236,17 +275,19 @@ export function searchRepos(db: Db, opts: SearchOptions): SearchResult {
 export interface RepoDetail extends LeaderRow {
   hacs_filename: string | null;
   default_branch: string | null;
+  parent_full_name: string | null;
   owner: string;
   name: string;
-  last_scraped_at: string | null;
 }
 
 export function repoDetailByFullName(db: Db, fullName: string): RepoDetail | undefined {
+  // RepoDetail already has last_scraped_at via LeaderRow — but we ALSO want
+  // owner / name / hacs_filename / default_branch / parent_full_name here.
   return db.raw
     .prepare<[string], RepoDetail>(
       `${LEADER_SELECT.replace(
         'r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork,',
-        'r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork, r.owner, r.name, r.hacs_filename, r.default_branch, r.last_scraped_at,',
+        'r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork, r.owner, r.name, r.hacs_filename, r.default_branch, r.parent_full_name,',
       )} WHERE r.full_name = ?`,
     )
     .get(fullName);

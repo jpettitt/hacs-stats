@@ -1,4 +1,11 @@
-import { type RowForList, fmtInt, kindLabel, renderLeaderTable, repoLink } from '../components.js';
+import {
+  type RowForList,
+  fmtInt,
+  kindLabel,
+  renderLeaderTable,
+  repoLink,
+  repoTags,
+} from '../components.js';
 import { escapeHtml } from '../sanitize.js';
 
 export type LeaderRow = RowForList;
@@ -85,7 +92,7 @@ export function renderHome(props: HomeProps): string {
         <tbody>${recentlyUpdated
           .map(
             (r) => `<tr>
-              <td>${repoLink(r.full_name, r.hacs_name)}</td>
+              <td>${repoLink(r.full_name, r.hacs_name)}${repoTags(r)}</td>
               ${descCell(r.description)}
               <td class="kind">${kindLabel(r.kind)}</td>
               <td class="num small">${fmtDate(r.last_commit_at)}</td>
@@ -98,13 +105,13 @@ export function renderHome(props: HomeProps): string {
 
     <section>
       <h2>New arrivals</h2>
-      <p class="lead small">Recently added to the HACS default lists.</p>
+      <p class="lead small">Recently added to the HACS default lists or submitted by users.</p>
       <table>
         <thead><tr><th>Repo</th><th class="desc-col">Description</th><th>Kind</th><th class="num">First seen</th></tr></thead>
         <tbody>${newArrivals
           .map(
             (r) => `<tr>
-              <td>${repoLink(r.full_name, r.hacs_name)}</td>
+              <td>${repoLink(r.full_name, r.hacs_name)}${repoTags(r)}</td>
               ${descCell(r.description)}
               <td class="kind">${kindLabel(r.kind)}</td>
               <td class="num small">${fmtDate(r.first_seen_at)}</td>

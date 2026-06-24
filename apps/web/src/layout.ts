@@ -225,10 +225,41 @@ section > h2 { margin-bottom: .75rem; }
 .tag-submitted  { color: #047857; border-color: #047857; }
 .tag-fork       { color: #92400e; border-color: #92400e; }
 .tag-archived   { color: var(--text-dimmer); border-color: var(--text-dimmer); }
+/* Pending = solid fill in the accent colour, NOT a muted outline — this is
+   the most important context ("the numbers next to me aren't real yet")
+   and should be impossible to miss. */
+.tag-pending    { background: var(--accent); color: white; border-color: var(--accent); }
 @media (prefers-color-scheme: dark) {
   .tag-submitted { color: #34d399; border-color: #34d399; }
   .tag-fork      { color: #fbbf24; border-color: #fbbf24; }
+  .tag-pending   { color: #0f172a; }
 }
+
+/* ---------- admin queue: related projects block --------------------- */
+.related {
+  margin-top: .35rem;
+  padding: .35rem .55rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: .35rem;
+  line-height: 1.5;
+}
+.related a { color: var(--accent); text-decoration: none; }
+.related a:hover { text-decoration: underline; }
+
+/* ---------- lifecycle banners (pending / offline / removed) --------- */
+.banner {
+  margin: 1.25rem 0; padding: .85rem 1.1rem;
+  border-radius: .5rem;
+  border-left: 4px solid var(--accent);
+  background: var(--bg-elev);
+  display: flex; gap: .75rem; flex-wrap: wrap; align-items: baseline;
+}
+.banner strong { color: var(--text); }
+.banner span   { color: var(--text-muted); font-size: .95rem; flex: 1; min-width: 14rem; }
+.banner-info { border-left-color: var(--accent); }
+.banner-warn { border-left-color: var(--warn-text); }
+.banner-err  { border-left-color: var(--danger); }
 
 /* ---------- pagination ---------------------------------------------- */
 .pagination {

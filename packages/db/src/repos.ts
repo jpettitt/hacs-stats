@@ -120,11 +120,185 @@ export function markScraped(db: Db, repoId: number): void {
     .run(new Date().toISOString(), repoId);
 }
 
+/**
+ * Record a successful scrape: bumps last_scraped_at, clears failure
+ * counters, transitions state to 'active' (even from 'offline' / 'removed' —
+ * recovery is allowed).
+ */
+export function markRepoSuccess(db: Db, repoId: number): void {
+  db.raw
+    .prepare(
+      `UPDATE repos
+          SET last_scraped_at = ?,
+              state = 'active',
+              first_failure_at = NULL,
+              consecutive_failures = 0
+        WHERE id = ?`,
+    )
+    .run(new Date().toISOString(), repoId);
+}
+
+export type FailureOutcome =
+  | { action: 'kept'; newState: 'pending' | 'active' | 'offline' | 'removed' }
+  | { action: 'deleted' };
+
+/**
+ * Record a failed scrape (repo missing on GitHub) and advance state:
+ *   pending  + 1st fail → pending (consecutive_failures=1)
+ *   pending  + 2nd fail → DELETE the row + cascades (caller resubmits)
+ *   active   + fail     → offline, first_failure_at=now
+ *   offline + fail (≥ removedAfterDays old) → removed
+ *   offline + fail (newer)                   → offline (counter bumps)
+ *   removed                                  → no-op
+ */
+export function markRepoFailure(
+  db: Db,
+  repoId: number,
+  opts: { removedAfterDays?: number; now?: Date } = {},
+): FailureOutcome {
+  const now = opts.now ?? new Date();
+  const removedAfter = opts.removedAfterDays ?? 30;
+  const row = db.raw
+    .prepare<
+      [number],
+      { state: string; first_failure_at: string | null; consecutive_failures: number }
+    >('SELECT state, first_failure_at, consecutive_failures FROM repos WHERE id = ?')
+    .get(repoId);
+  if (!row) return { action: 'kept', newState: 'active' };
+
+  if (row.state === 'pending') {
+    if (row.consecutive_failures >= 1) {
+      deleteRepoCascade(db, repoId);
+      return { action: 'deleted' };
+    }
+    db.raw
+      .prepare(
+        `UPDATE repos SET consecutive_failures = consecutive_failures + 1,
+                          first_failure_at = COALESCE(first_failure_at, ?)
+                    WHERE id = ?`,
+      )
+      .run(now.toISOString(), repoId);
+    return { action: 'kept', newState: 'pending' };
+  }
+
+  if (row.state === 'active') {
+    db.raw
+      .prepare(
+        `UPDATE repos SET state = 'offline',
+                          first_failure_at = ?,
+                          consecutive_failures = 1
+                    WHERE id = ?`,
+      )
+      .run(now.toISOString(), repoId);
+    return { action: 'kept', newState: 'offline' };
+  }
+
+  if (row.state === 'offline') {
+    const firstFailMs = row.first_failure_at ? Date.parse(row.first_failure_at) : Number.NaN;
+    const ageMs = Number.isFinite(firstFailMs) ? now.getTime() - firstFailMs : 0;
+    const thresholdMs = removedAfter * 24 * 60 * 60 * 1000;
+    if (ageMs >= thresholdMs) {
+      db.raw
+        .prepare(
+          `UPDATE repos SET state = 'removed',
+                            consecutive_failures = consecutive_failures + 1
+                      WHERE id = ?`,
+        )
+        .run(repoId);
+      return { action: 'kept', newState: 'removed' };
+    }
+    db.raw
+      .prepare('UPDATE repos SET consecutive_failures = consecutive_failures + 1 WHERE id = ?')
+      .run(repoId);
+    return { action: 'kept', newState: 'offline' };
+  }
+
+  return { action: 'kept', newState: 'removed' as const };
+}
+
+/**
+ * Rename a repo in place (used when GitHub returns a canonical name
+ * different from the request — the repo was moved/renamed on GitHub).
+ * Updates owner / name / full_name, preserves id and all referenced
+ * snapshots/releases. Returns failure when the new name already lives
+ * elsewhere in the catalogue (the caller should delete the old as a
+ * duplicate).
+ */
+export function renameRepo(
+  db: Db,
+  repoId: number,
+  newFullName: string,
+): { ok: true } | { ok: false; reason: 'duplicate' | 'malformed' } {
+  const slash = newFullName.indexOf('/');
+  if (slash <= 0 || slash !== newFullName.lastIndexOf('/')) {
+    return { ok: false, reason: 'malformed' };
+  }
+  const owner = newFullName.slice(0, slash);
+  const name = newFullName.slice(slash + 1);
+  if (!owner || !name) return { ok: false, reason: 'malformed' };
+
+  const conflict = db.raw
+    .prepare<[string, number], { id: number }>(
+      'SELECT id FROM repos WHERE full_name = ? AND id != ?',
+    )
+    .get(newFullName, repoId);
+  if (conflict) return { ok: false, reason: 'duplicate' };
+
+  db.raw
+    .prepare('UPDATE repos SET owner = ?, name = ?, full_name = ? WHERE id = ?')
+    .run(owner, name, newFullName, repoId);
+  return { ok: true };
+}
+
+/**
+ * Delete a repo and all dependent rows. Children are wired via REFERENCES /
+ * ON DELETE CASCADE in the schema, but we wipe them explicitly too in case
+ * older migrations didn't include the cascade. Wrapped in a single tx.
+ */
+export function deleteRepoCascade(db: Db, repoId: number): void {
+  const tx = db.raw.transaction(() => {
+    db.raw
+      .prepare(
+        'DELETE FROM release_asset_snapshots WHERE release_id IN (SELECT id FROM releases WHERE repo_id = ?)',
+      )
+      .run(repoId);
+    db.raw.prepare('DELETE FROM releases WHERE repo_id = ?').run(repoId);
+    db.raw.prepare('DELETE FROM repo_snapshots WHERE repo_id = ?').run(repoId);
+    db.raw.prepare('DELETE FROM stats_cache WHERE repo_id = ?').run(repoId);
+    db.raw.prepare('DELETE FROM repos WHERE id = ?').run(repoId);
+  });
+  tx();
+}
+
+/** Find other repos in our catalogue owned by the same GitHub user/org —
+ * used by /admin/queue to surface 'related projects' alongside each
+ * candidate. Excludes the repo being queried so the row doesn't list itself. */
+export function listRepoIdentsByOwner(
+  db: Db,
+  owner: string,
+  excludeFullName?: string,
+): Array<{ full_name: string; hacs_name: string | null; kind: string }> {
+  if (excludeFullName) {
+    return db.raw
+      .prepare<[string, string], { full_name: string; hacs_name: string | null; kind: string }>(
+        'SELECT full_name, hacs_name, kind FROM repos WHERE owner = ? AND full_name != ? ORDER BY full_name',
+      )
+      .all(owner, excludeFullName);
+  }
+  return db.raw
+    .prepare<[string], { full_name: string; hacs_name: string | null; kind: string }>(
+      'SELECT full_name, hacs_name, kind FROM repos WHERE owner = ? ORDER BY full_name',
+    )
+    .all(owner);
+}
+
 export interface UpdateRepoMetadataInput {
   repoId: number;
   description: string | null;
   archived: boolean;
   isFork: boolean;
+  /** For forks, "owner/name" of the upstream repo. Null for non-forks. */
+  parentFullName: string | null;
   defaultBranch: string | null;
 }
 
@@ -141,12 +315,16 @@ export interface UpdateRepoMetadataInput {
 export function updateRepoMetadata(db: Db, input: UpdateRepoMetadataInput): void {
   db.raw
     .prepare(
-      'UPDATE repos SET description = ?, archived = ?, is_fork = ?, default_branch = ? WHERE id = ?',
+      `UPDATE repos
+          SET description = ?, archived = ?, is_fork = ?,
+              parent_full_name = ?, default_branch = ?
+        WHERE id = ?`,
     )
     .run(
       input.description,
       input.archived ? 1 : 0,
       input.isFork ? 1 : 0,
+      input.parentFullName,
       input.defaultBranch,
       input.repoId,
     );

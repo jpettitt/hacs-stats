@@ -8,6 +8,7 @@ import { renderAboutPage } from './pages/about.js';
 import { renderAdminPage } from './pages/admin.js';
 import { renderCategoriesIndex, renderCategoryPage } from './pages/category.js';
 import { renderHome } from './pages/home.js';
+import { renderPendingPage, renderRemovedPage } from './pages/lifecycle.js';
 import { renderRepoDetail } from './pages/repo.js';
 import { renderSearchPage } from './pages/search.js';
 import { renderSubmitPage } from './pages/submit.js';
@@ -149,7 +150,10 @@ app.get('/r/:owner/:name', (c) => {
       hacs_name: detail.hacs_name,
       kind: detail.kind,
       source: detail.source,
+      state: detail.state,
+      first_failure_at: detail.first_failure_at,
       is_fork: detail.is_fork,
+      parent_full_name: detail.parent_full_name,
       description: detail.description,
       archived: detail.archived,
       hacs_filename: detail.hacs_filename,
@@ -234,6 +238,26 @@ app.get('/search', (c) => {
       title,
       searchValue: q,
       body,
+    }),
+  );
+});
+
+app.get('/pending', (c) => {
+  const rows = leaders.pendingRepos(db, 200);
+  return c.html(
+    renderLayout({
+      title: 'Pending repos — hacs-stats',
+      body: renderPendingPage({ rows }),
+    }),
+  );
+});
+
+app.get('/removed', (c) => {
+  const rows = leaders.removedRepos(db, 200);
+  return c.html(
+    renderLayout({
+      title: 'Removed repos — hacs-stats',
+      body: renderRemovedPage({ rows }),
     }),
   );
 });
@@ -355,11 +379,24 @@ app.get('/admin/queue', (c) => {
   const pending = discoveryQueue.listQueueByStatus(db, 'pending', 200);
   const totals = discoveryQueue.countQueueByStatus(db);
   const msg = c.req.query('msg');
+  // Enrich each queue item with "related projects" — other repos in our
+  // catalogue owned by the same GitHub owner. Helps the admin recognise
+  // when the owner is a known prolific HACS contributor vs a brand-new face
+  // (and notice when they've already submitted 12 cards in a batch).
+  const enriched = pending.map((it) => {
+    const m = /github\.com\/([A-Za-z0-9._-]+)\/[A-Za-z0-9._-]+$/.exec(it.url);
+    const owner = m?.[1];
+    const fullName = m ? it.url.replace(/^.*github\.com\//, '') : '';
+    return {
+      ...it,
+      related: owner ? repos.listRepoIdentsByOwner(db, owner, fullName) : [],
+    };
+  });
   return c.html(
     renderLayout({
       title: 'Admin · queue — hacs-stats',
       body: renderAdminPage({
-        pending,
+        pending: enriched,
         totals,
         ...(msg !== undefined ? { flash: msg } : {}),
       }),

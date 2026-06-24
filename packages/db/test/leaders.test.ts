@@ -21,7 +21,12 @@ function seedRepo(
   name: string,
   kind: 'plugin' | 'integration' = 'plugin',
 ): number {
-  return repos.upsertRepo(db, { owner, name, kind, source: 'default' });
+  // Most tests assume the seeded repo shows up in leaderboards; since those
+  // now filter to state='active', flip the row out of the migration's
+  // default 'pending' as soon as it's seeded.
+  const id = repos.upsertRepo(db, { owner, name, kind, source: 'default' });
+  db.raw.prepare("UPDATE repos SET state = 'active' WHERE id = ?").run(id);
+  return id;
 }
 
 function seedStats(

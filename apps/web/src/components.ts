@@ -13,9 +13,16 @@ export interface RowForList {
   kind: string;
   /** default | discovered | submitted — shown as a small badge in listings. */
   source?: string;
+  /** pending | active | offline | removed — lifecycle state from repos.state.
+   * Default listings filter to 'active'; this surfaces on /pending, /removed,
+   * and the detail page when navigated to directly. */
+  state?: string;
   /** GitHub fork flag — surfaced as a "fork" badge alongside source. */
   is_fork?: number;
   archived?: number;
+  /** Mostly redundant with state — kept as a fallback for callers that
+   * didn't select `state`. */
+  last_scraped_at?: string | null;
   stars: number;
   latest_release_downloads?: number;
   latest_release_tag?: string | null;
@@ -80,8 +87,33 @@ export function kindLabel(kind: string): string {
  * fork or archived. Returns "" for the common case (HACS-default, not a
  * fork, not archived) so listings don't get cluttered.
  */
-export function repoTags(row: { source?: string; is_fork?: number; archived?: number }): string {
+export function repoTags(row: {
+  source?: string;
+  is_fork?: number;
+  archived?: number;
+  last_scraped_at?: string | null;
+}): string {
   const tags: string[] = [];
+  // Pending tag comes first so it's the most prominent — it's the most
+  // important piece of context ("the numbers next to this aren't real yet").
+  // Only show when explicitly null (column was selected and the value
+  // really is missing); undefined means the caller didn't ask for it, so
+  // we can't tell — stay silent.
+  // Lifecycle state tags come first when non-default (most important context).
+  // `state` is the canonical signal; `last_scraped_at IS NULL` is mostly a
+  // proxy for pending and only used as a fallback when state isn't selected.
+  const state = (row as { state?: string }).state;
+  if (state === 'pending' || (state === undefined && row.last_scraped_at === null)) {
+    tags.push(
+      '<span class="tag tag-pending" title="Accepted but not yet scraped — numbers appear after the next nightly run">pending</span>',
+    );
+  } else if (state === 'offline') {
+    tags.push(
+      '<span class="tag tag-offline" title="Recent scrapes have not been able to reach this repo">offline</span>',
+    );
+  } else if (state === 'removed') {
+    tags.push('<span class="tag tag-removed" title="Unreachable for 30+ days">removed</span>');
+  }
   if (row.source === 'discovered') tags.push('<span class="tag tag-discovered">discovered</span>');
   if (row.source === 'submitted') tags.push('<span class="tag tag-submitted">submitted</span>');
   if (row.is_fork) tags.push('<span class="tag tag-fork">fork</span>');
@@ -161,6 +193,9 @@ export function renderLeaderTable(rows: RowForList[], opts: LeaderTableOptions):
     <th class="num">${escapeHtml(opts.valueLabel)}</th>
     ${showDelta ? '<th class="num">Stars Δ30d</th>' : ''}
   </tr>`;
+  // Listings filter to state='active' upstream, so we don't expect to see
+  // pending/offline/removed here — em-dash fallback removed in favour of the
+  // banner-on-detail-page approach (see pages/repo.ts).
   const body = rows
     .map(
       (r) => `<tr>

@@ -8,6 +8,10 @@ interface Item {
   status: string;
   discovered_at: string;
   notes: string | null;
+  /** Other repos in our catalogue owned by the same GitHub user/org, if any.
+   * Surfaced as "Related projects" — gives the admin context for whether
+   * the owner is a known prolific HACS contributor or a brand-new face. */
+  related?: Array<{ full_name: string; hacs_name: string | null; kind: string }>;
 }
 
 export interface AdminPageProps {
@@ -43,8 +47,26 @@ export function renderAdminPage(props: AdminPageProps): string {
       const safeUrl = escapeHtml(it.url);
       const safeFullName = escapeHtml(urlToFullName(it.url));
       const safeNotes = it.notes ? escapeHtml(it.notes) : '';
+      const related =
+        it.related && it.related.length > 0
+          ? `<div class="related muted small">
+              <strong>Related projects from same owner</strong> (${it.related.length}):<br>
+              ${it.related
+                .slice(0, 8)
+                .map(
+                  (r) =>
+                    `<a href="/r/${escapeHtml(r.full_name)}">${escapeHtml(
+                      r.hacs_name && r.hacs_name.length > 0 ? r.hacs_name : r.full_name,
+                    )}</a>`,
+                )
+                .join(', ')}${it.related.length > 8 ? `, +${it.related.length - 8} more` : ''}
+            </div>`
+          : `<div class="related muted small">First repo we've seen from this owner.</div>`;
       return `<tr>
-        <td><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeFullName}</a></td>
+        <td>
+          <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeFullName}</a>
+          ${related}
+        </td>
         <td class="kind">${escapeHtml(it.source)}</td>
         <td class="num small">${escapeHtml(it.discovered_at.slice(0, 10))}</td>
         <td class="muted small">${safeNotes}</td>
