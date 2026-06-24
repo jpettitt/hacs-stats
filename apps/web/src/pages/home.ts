@@ -55,8 +55,15 @@ export function renderHome(props: HomeProps): string {
       </p>
       ${renderLeaderTable(topByDownloads, {
         valueLabel: 'Downloads',
+        // Version on its OWN line beneath the number so digits stay
+        // right-aligned across rows (variable-length tags like "v0.13.0"
+        // vs "v5" otherwise push numbers to different columns).
         formatValue: (r) =>
-          `${fmtInt(r.latest_release_downloads ?? 0)}${r.latest_release_tag ? ` <span class="muted small">(${escapeHtml(r.latest_release_tag)})</span>` : ''}`,
+          `${escapeHtml(fmtInt(r.latest_release_downloads ?? 0))}${
+            r.latest_release_tag
+              ? `<br><span class="muted small">${escapeHtml(r.latest_release_tag)}</span>`
+              : ''
+          }`,
       })}
     </section>
 

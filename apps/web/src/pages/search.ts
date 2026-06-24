@@ -53,7 +53,13 @@ function valueForSort(r: RowForList, sort: SortValue): string {
     case 'stars':
       return escapeHtml(fmtInt(r.stars));
     case 'downloads':
-      return `${escapeHtml(fmtInt(r.latest_release_downloads ?? 0))}${r.latest_release_tag ? ` <span class="muted small">(${escapeHtml(r.latest_release_tag)})</span>` : ''}`;
+      // Version on its own line so digits align in the column (matches
+      // the home "Top by downloads" treatment).
+      return `${escapeHtml(fmtInt(r.latest_release_downloads ?? 0))}${
+        r.latest_release_tag
+          ? `<br><span class="muted small">${escapeHtml(r.latest_release_tag)}</span>`
+          : ''
+      }`;
     case 'trending':
       return escapeHtml(fmtInt(r.downloads_30d));
     case 'recent':
