@@ -18,8 +18,14 @@ export interface LeaderRow {
   /** Cumulative downloads on the repo's latest non-prerelease release. */
   latest_release_downloads: number;
   latest_release_tag: string | null;
-  /** Velocity metric — sum of per-release deltas over 30 days. Kept for "trending"
-   * views; the headline number on listings is `latest_release_downloads`. */
+  /** Clean install signal: change in latest_release_downloads over the last 30d. */
+  latest_release_downloads_30d: number;
+  /** Tag of the release with the highest 90-day download delta (any release). */
+  hot_release_tag_90d: string | null;
+  /** That release's 90d download delta. */
+  hot_release_downloads_90d: number;
+  /** LEGACY: SUM of per-release 30d deltas. Double-counts upgrades. Kept for
+   * one release for backwards compat; new UI uses latest_release_downloads_30d. */
   downloads_30d: number;
   star_delta_7d: number;
   star_delta_30d: number;
@@ -32,13 +38,16 @@ const LEADER_SELECT = `
   SELECT
     r.id, r.full_name, r.hacs_name, r.kind, r.description, r.archived,
     r.first_seen_at,
-    COALESCE(latest.stars, 0)                  AS stars,
+    COALESCE(latest.stars, 0)                         AS stars,
     latest.last_commit_at,
-    COALESCE(sc.latest_release_downloads, 0)   AS latest_release_downloads,
+    COALESCE(sc.latest_release_downloads, 0)          AS latest_release_downloads,
     sc.latest_release_tag,
-    COALESCE(sc.total_downloads_30d, 0)        AS downloads_30d,
-    COALESCE(sc.star_delta_7d, 0)              AS star_delta_7d,
-    COALESCE(sc.star_delta_30d, 0)             AS star_delta_30d,
+    COALESCE(sc.latest_release_downloads_30d, 0)      AS latest_release_downloads_30d,
+    sc.hot_release_tag_90d,
+    COALESCE(sc.hot_release_downloads_90d, 0)         AS hot_release_downloads_90d,
+    COALESCE(sc.total_downloads_30d, 0)               AS downloads_30d,
+    COALESCE(sc.star_delta_7d, 0)                     AS star_delta_7d,
+    COALESCE(sc.star_delta_30d, 0)                    AS star_delta_30d,
     sc.top_version_30d
   FROM repos r
   LEFT JOIN stats_cache sc ON sc.repo_id = r.id
@@ -152,7 +161,9 @@ const ORDER_BY_BY_SORT: Record<SearchSort, string> = {
   name: "COALESCE(NULLIF(r.hacs_name, ''), r.full_name) COLLATE NOCASE ASC",
   stars: 'stars DESC, r.full_name COLLATE NOCASE ASC',
   downloads: 'latest_release_downloads DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
-  trending: 'downloads_30d DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
+  // trending uses the new clean 30d-delta on the latest release, NOT the
+  // legacy SUM-across-releases column which double-counts upgrades.
+  trending: 'latest_release_downloads_30d DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
   recent: 'latest.last_commit_at DESC, r.full_name COLLATE NOCASE ASC',
 };
 
@@ -257,8 +268,9 @@ export function repoStarsTimeseries(
 
 /**
  * Latest known download_count per release for one repo, on the most recent
- * snapshot_date. If hacs_filename is set we filter to that asset; otherwise
- * we sum every asset on the release (matches stats_cache attribution).
+ * snapshot_date. Attribution: MAX over eligible assets — filtered to the
+ * declared `hacs_filename` when set, all assets otherwise. Mirrors the
+ * stats_cache rollup; see apps/scraper/src/rollup.ts for why MAX (not SUM).
  */
 export interface ReleaseDownloadRow {
   tag: string;
@@ -269,6 +281,10 @@ export interface ReleaseDownloadRow {
 }
 
 export function releaseDownloadsForRepo(db: Db, repoId: number, limit = 30): ReleaseDownloadRow[] {
+  // Attribution: MAX over eligible assets. When hacs_filename is set, only
+  // the matching asset is eligible (it's the file HACS actually fetches);
+  // otherwise every asset is eligible and MAX picks the dominant one as
+  // the install proxy. Mirrors the rollup query in apps/scraper/src/rollup.ts.
   return db.raw
     .prepare<[number, number], ReleaseDownloadRow>(
       `WITH latest_date AS (
@@ -279,13 +295,13 @@ export function releaseDownloadsForRepo(db: Db, repoId: number, limit = 30): Rel
       )
       SELECT
         rel.tag, rel.published_at, rel.is_prerelease, rel.html_url,
-        SUM(
+        COALESCE(MAX(
           CASE
-            WHEN (SELECT hacs_filename FROM hacs_filter) IS NOT NULL
-              AND ras.asset_name != (SELECT hacs_filename FROM hacs_filter) THEN 0
-            ELSE COALESCE(ras.download_count, 0)
+            WHEN (SELECT hacs_filename FROM hacs_filter) IS NULL
+              OR ras.asset_name = (SELECT hacs_filename FROM hacs_filter)
+              THEN ras.download_count
           END
-        ) AS downloads
+        ), 0) AS downloads
       FROM releases rel
       LEFT JOIN release_asset_snapshots ras
         ON ras.release_id = rel.id AND ras.snapshot_date = (SELECT d FROM latest_date)

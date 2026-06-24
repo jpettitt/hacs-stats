@@ -28,17 +28,23 @@ export function upsertStatsCacheRow(db: Db, row: StatsCacheRow): void {
       INSERT INTO stats_cache (
         repo_id, top_version_30d, top_version_downloads_30d,
         total_downloads_30d, star_delta_7d, star_delta_30d,
-        latest_release_tag, latest_release_downloads, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        latest_release_tag, latest_release_downloads,
+        latest_release_downloads_30d,
+        hot_release_tag_90d, hot_release_downloads_90d,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(repo_id) DO UPDATE SET
-        top_version_30d           = excluded.top_version_30d,
-        top_version_downloads_30d = excluded.top_version_downloads_30d,
-        total_downloads_30d       = excluded.total_downloads_30d,
-        star_delta_7d             = excluded.star_delta_7d,
-        star_delta_30d            = excluded.star_delta_30d,
-        latest_release_tag        = excluded.latest_release_tag,
-        latest_release_downloads  = excluded.latest_release_downloads,
-        updated_at                = excluded.updated_at
+        top_version_30d              = excluded.top_version_30d,
+        top_version_downloads_30d    = excluded.top_version_downloads_30d,
+        total_downloads_30d          = excluded.total_downloads_30d,
+        star_delta_7d                = excluded.star_delta_7d,
+        star_delta_30d               = excluded.star_delta_30d,
+        latest_release_tag           = excluded.latest_release_tag,
+        latest_release_downloads     = excluded.latest_release_downloads,
+        latest_release_downloads_30d = excluded.latest_release_downloads_30d,
+        hot_release_tag_90d          = excluded.hot_release_tag_90d,
+        hot_release_downloads_90d    = excluded.hot_release_downloads_90d,
+        updated_at                   = excluded.updated_at
     `)
     .run(
       row.repo_id,
@@ -49,6 +55,9 @@ export function upsertStatsCacheRow(db: Db, row: StatsCacheRow): void {
       row.star_delta_30d,
       row.latest_release_tag,
       row.latest_release_downloads,
+      row.latest_release_downloads_30d,
+      row.hot_release_tag_90d,
+      row.hot_release_downloads_90d,
       row.updated_at,
     );
 }

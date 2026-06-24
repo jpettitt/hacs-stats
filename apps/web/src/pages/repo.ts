@@ -16,10 +16,16 @@ export interface RepoDetailProps {
   stars: number;
   star_delta_7d: number;
   star_delta_30d: number;
+  /** LEGACY 30d delta; not surfaced anymore. */
   downloads_30d: number;
   top_version_30d: string | null;
   latest_release_tag: string | null;
   latest_release_downloads: number;
+  /** Clean install signal: latest release's downloads in the last 30 days. */
+  latest_release_downloads_30d: number;
+  /** Release with the highest 90-day delta (may differ from latest). */
+  hot_release_tag_90d: string | null;
+  hot_release_downloads_90d: number;
 }
 
 export interface RepoDetailViewModel {
@@ -64,8 +70,10 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
     `<div class="stat-tile"><strong>${escapeHtml(value)}</strong><span class="muted small">${escapeHtml(label)}</span></div>`;
 
   // Headline number: cumulative downloads of the LATEST non-prerelease
-  // release's HACS asset. Closer to "current install base" than a 30-day
-  // delta. We expose the 30d delta too, smaller, as a trend signal.
+  // release's HACS asset. Closer to "current install base" than any delta.
+  // We expose the clean 30d delta (latest release's own growth) as a
+  // second tile — NOT the legacy SUM-across-releases, which double-counted
+  // upgrades.
   const downloadsLabel = detail.latest_release_tag
     ? `downloads of ${detail.latest_release_tag}`
     : 'downloads (latest release)';
@@ -75,10 +83,23 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
       ${statTile(fmtDelta(detail.star_delta_7d), 'stars Δ 7d')}
       ${statTile(fmtDelta(detail.star_delta_30d), 'stars Δ 30d')}
       ${statTile(fmtInt(detail.latest_release_downloads), downloadsLabel)}
-      ${statTile(fmtInt(detail.downloads_30d), 'downloads Δ 30d')}
+      ${statTile(fmtInt(detail.latest_release_downloads_30d), 'new in last 30d')}
     </div>`;
 
-  const topVersion = '';
+  // Surfaces the release with the highest 90-day delta on its dominant
+  // asset — useful when the most-pulled version isn't the latest tag.
+  const hotVersion =
+    detail.hot_release_tag_90d && detail.hot_release_downloads_90d > 0
+      ? `<p class="lead small subtitle">
+          Most-downloaded release in the last 90 days:
+          <code>${escapeHtml(detail.hot_release_tag_90d)}</code>
+          (${escapeHtml(fmtInt(detail.hot_release_downloads_90d))} downloads)${
+            detail.hot_release_tag_90d !== detail.latest_release_tag
+              ? ' — note this is NOT the latest tag.'
+              : ''
+          }
+        </p>`
+      : '';
 
   const starsChart = renderLineChart(starsSeries, {
     ariaLabel: `Stars over time for ${detail.full_name}`,
@@ -108,7 +129,7 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
 
   const hacsFilename = detail.hacs_filename
     ? `<code>${escapeHtml(detail.hacs_filename)}</code>`
-    : '<span class="muted">(none declared; counts sum all release assets)</span>';
+    : '<span class="muted">(none declared; we use the most-downloaded asset per release as the install proxy)</span>';
 
   const metaTable = `
     <table>
@@ -127,7 +148,7 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
     ${subtitle}
     ${description}
     ${statsGrid}
-    ${topVersion}
+    ${hotVersion}
     <section>
       <h2>Stars over time</h2>
       ${starsChart}

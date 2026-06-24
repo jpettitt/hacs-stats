@@ -37,6 +37,9 @@ function seedStats(
     top_version_30d?: string | null;
     latest_release_tag?: string | null;
     latest_release_downloads?: number | null;
+    latest_release_downloads_30d?: number | null;
+    hot_release_tag_90d?: string | null;
+    hot_release_downloads_90d?: number | null;
     date?: string;
   },
 ) {
@@ -58,6 +61,9 @@ function seedStats(
     star_delta_30d: opts.star_delta_30d ?? 0,
     latest_release_tag: opts.latest_release_tag ?? null,
     latest_release_downloads: opts.latest_release_downloads ?? null,
+    latest_release_downloads_30d: opts.latest_release_downloads_30d ?? null,
+    hot_release_tag_90d: opts.hot_release_tag_90d ?? null,
+    hot_release_downloads_90d: opts.hot_release_downloads_90d ?? null,
     updated_at: 'test',
   });
 }
@@ -218,7 +224,11 @@ describe('leaders.releaseDownloadsForRepo', () => {
     ]);
   });
 
-  it('sums all assets when hacs_filename is unset', () => {
+  it('takes MAX across assets when hacs_filename is unset (not SUM)', () => {
+    // Downloads are a proxy for installs — one install = one download of
+    // the canonical asset. SUMing multiple assets would inflate the count
+    // for repos that bundle e.g. icons + main file (each downloaded
+    // alongside the install). MAX picks the dominant asset.
     const db = freshDb();
     const id = seedRepo(db, 'me', 'thing');
     // No setHacsFilename.
@@ -242,7 +252,8 @@ describe('leaders.releaseDownloadsForRepo', () => {
       downloadCount: 25,
     });
     const rows = leaders.releaseDownloadsForRepo(db, id, 10);
-    expect(rows[0]?.downloads).toBe(35);
+    // MAX(10, 25) = 25. SUM would have given 35.
+    expect(rows[0]?.downloads).toBe(25);
   });
 });
 
@@ -294,12 +305,12 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'c/c', 'a/a']);
   });
 
-  it('sort=trending orders by total_downloads_30d (velocity) DESC', () => {
+  it('sort=trending orders by latest_release_downloads_30d (clean install signal) DESC', () => {
     const db = freshDb();
     const a = seedRepo(db, 'a', 'a');
     const b = seedRepo(db, 'b', 'b');
-    seedStats(db, a, { stars: 1, downloads_30d: 10 });
-    seedStats(db, b, { stars: 1, downloads_30d: 500 });
+    seedStats(db, a, { stars: 1, latest_release_downloads_30d: 10 });
+    seedStats(db, b, { stars: 1, latest_release_downloads_30d: 500 });
     const hits = leaders.searchRepos(db, { q: '', sort: 'trending' }).rows;
     expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'a/a']);
   });

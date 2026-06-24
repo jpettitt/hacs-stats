@@ -21,14 +21,37 @@ export function renderAboutPage(): string {
       (someone might just be browsing GitHub).
     </p>
 
-    <h3>Top version in last 30 days</h3>
+    <h3>Headline "downloads" number</h3>
     <p>
-      For every repo, we snapshot the cumulative download count of its HACS
-      asset on each release every day. The "30-day downloads" stat is the
-      delta between today's snapshot and the snapshot from 30 days ago,
-      summed across all of that repo's releases. The "top version" picks the
-      single release with the highest delta — that's "the version people are
-      actively pulling right now," tolerant of slow upgraders.
+      For each repo we surface the <strong>cumulative download count of the
+      latest non-prerelease release's HACS asset</strong>. It's the closest
+      proxy we have for "current install base" — most installs sit on the
+      latest stable version. Prereleases are excluded so a fresh
+      <code>v3.0.0-rc</code> tag doesn't displace a popular <code>v2.9.0</code>.
+    </p>
+
+    <h3>How we attribute downloads across multi-asset releases</h3>
+    <p>
+      Many releases publish more than one file: a main <code>.js</code>, signed
+      builds, icon bundles, etc. Each install only pulls one canonical file —
+      so to avoid inflating the count by <em>N</em>× we use the
+      <strong>MAX</strong> download across eligible assets, never the sum.
+    </p>
+    <ul>
+      <li><strong>If <code>hacs.json</code> declares a <code>filename</code>:</strong>
+        only that asset is eligible — its count is the answer.</li>
+      <li><strong>If it doesn't:</strong> every asset is eligible, and we take
+        the most-downloaded one as the install proxy. For repos that ship a
+        main file plus a bunch of icons, the icons all settle around the same
+        download count as the main file, so MAX still lands on roughly the
+        right number.</li>
+    </ul>
+
+    <h3>Trending (30-day delta)</h3>
+    <p>
+      The "Trending" view ranks repos by the change in the headline download
+      number over the last 30 days. Useful for spotting active growth that
+      the cumulative count flattens out.
     </p>
 
     <h3>Stars Δ</h3>

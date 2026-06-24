@@ -88,17 +88,34 @@ describe('computeStatsCache — downloads', () => {
     expect(row?.top_version_downloads_30d).toBe(50);
   });
 
-  it('without hacs_filename, sums all assets on the release', () => {
+  it('without hacs_filename, takes MAX delta across assets (not SUM)', () => {
+    // MAX over SUM is a deliberate choice: many repos publish bundled
+    // assets (icons, signed builds, multiple .js variants) that all get
+    // downloaded together. SUM would inflate by ~Nx; MAX picks the
+    // dominant asset as the install proxy.
     const db = freshDb();
     const r = seedRepo(db, 'a', 'b');
     const rel = seedRelease(db, r, 'v1');
-    seedAssetSnapshot(db, rel, 'a.zip', '2026-05-22', 100);
-    seedAssetSnapshot(db, rel, 'a.zip', '2026-06-21', 110);
-    seedAssetSnapshot(db, rel, 'b.zip', '2026-05-22', 5);
-    seedAssetSnapshot(db, rel, 'b.zip', '2026-06-21', 8);
+    seedAssetSnapshot(db, rel, 'main.js', '2026-05-22', 100);
+    seedAssetSnapshot(db, rel, 'main.js', '2026-06-21', 110); // delta 10
+    seedAssetSnapshot(db, rel, 'icon-a.svg', '2026-05-22', 100);
+    seedAssetSnapshot(db, rel, 'icon-a.svg', '2026-06-21', 109); // delta 9
+    seedAssetSnapshot(db, rel, 'icon-b.svg', '2026-05-22', 100);
+    seedAssetSnapshot(db, rel, 'icon-b.svg', '2026-06-21', 108); // delta 8
     computeStatsCache(db, { asOfDate: '2026-06-21', nowIso: 'test' });
     const row = statsCache.getStatsCacheRow(db, r);
-    expect(row?.total_downloads_30d).toBe(13); // (110-100) + (8-5)
+    // MAX(10, 9, 8) = 10. SUM would have given 27.
+    expect(row?.total_downloads_30d).toBe(10);
+  });
+
+  it('single-asset release: MAX behaves the same as SUM', () => {
+    const db = freshDb();
+    const r = seedRepo(db, 'a', 'b'); // no hacs_filename
+    const rel = seedRelease(db, r, 'v1');
+    seedAssetSnapshot(db, rel, 'only.zip', '2026-05-22', 100);
+    seedAssetSnapshot(db, rel, 'only.zip', '2026-06-21', 142);
+    computeStatsCache(db, { asOfDate: '2026-06-21', nowIso: 'test' });
+    expect(statsCache.getStatsCacheRow(db, r)?.total_downloads_30d).toBe(42);
   });
 
   it('picks the release with the highest delta as top_version_30d', () => {
@@ -168,6 +185,21 @@ describe('computeStatsCache — latest stable release downloads', () => {
     seedAssetSnapshot(db, v1, 'source.zip', '2026-06-21', 9999); // must be ignored
     computeStatsCache(db, { asOfDate: '2026-06-21', nowIso: 'test' });
     expect(statsCache.getStatsCacheRow(db, r)?.latest_release_downloads).toBe(1500);
+  });
+
+  it('without hacs_filename, takes MAX across assets (Platinum-style icon-bundle case)', () => {
+    const db = freshDb();
+    const r = seedRepo(db, 'a', 'b'); // no hacs_filename
+    const v1 = seedRelease(db, r, '1.0.5');
+    // Like Platinum: 113 icon SVGs + the main JS, all roughly equal because
+    // each install pulls the whole bundle.
+    seedAssetSnapshot(db, v1, 'main.js', '2026-06-23', 55170);
+    seedAssetSnapshot(db, v1, 'icon-a.svg', '2026-06-23', 55088);
+    seedAssetSnapshot(db, v1, 'icon-b.svg', '2026-06-23', 55070);
+    seedAssetSnapshot(db, v1, 'icon-c.svg', '2026-06-23', 55069);
+    computeStatsCache(db, { asOfDate: '2026-06-23', nowIso: 'test' });
+    // MAX(55170, 55088, 55070, 55069) = 55170. SUM would have been 220397.
+    expect(statsCache.getStatsCacheRow(db, r)?.latest_release_downloads).toBe(55170);
   });
 
   it('returns null tag for a repo with only prereleases', () => {

@@ -34,5 +34,11 @@ export interface StatsCacheRow {
   latest_release_tag: string | null;
   /** Cumulative download count of the HACS asset on the latest non-pre release. */
   latest_release_downloads: number | null;
+  /** Change in `latest_release_downloads` over the last 30 days — clean install signal. */
+  latest_release_downloads_30d: number | null;
+  /** Release tag with the highest 90-day download delta (any of the repo's releases). */
+  hot_release_tag_90d: string | null;
+  /** That release's 90-day download delta. */
+  hot_release_downloads_90d: number | null;
   updated_at: string;
 }
