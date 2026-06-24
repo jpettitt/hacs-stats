@@ -46,6 +46,9 @@ function dropdown(
 
 function valueForSort(r: RowForList, sort: SortValue): string {
   // formatValue returns trusted HTML; caller escapes anything user-derived.
+  // For sort='name' the sort key IS the repo name (already in the Repo
+  // column), so the value cell shows stars as the consolation metric —
+  // see columnHeaderForSort for the matching column label.
   switch (sort) {
     case 'stars':
       return escapeHtml(fmtInt(r.stars));
@@ -60,6 +63,24 @@ function valueForSort(r: RowForList, sort: SortValue): string {
   }
 }
 
+/** Column header — must match what valueForSort actually puts in the cell.
+ * Not the same as the sort-dropdown label; the dropdown describes the SORT,
+ * this describes the column's CONTENT. (Previously they were the same and
+ * we ended up showing "399" under a "Name (A-Z)" header.) */
+function columnHeaderForSort(sort: SortValue): string {
+  switch (sort) {
+    case 'downloads':
+      return 'Downloads';
+    case 'trending':
+      return 'New in 30d';
+    case 'recent':
+      return 'Last commit';
+    default:
+      return 'Stars';
+  }
+}
+
+/** Long-form label for the sort dropdown / summary text ("sorted by X"). */
 function labelForSort(sort: SortValue): string {
   return SORT_OPTIONS.find((o) => o.value === sort)?.label ?? 'Stars';
 }
@@ -99,7 +120,7 @@ export function renderSearchPage(props: SearchPageProps): string {
       : `${props.total} repos${props.kind ? ` in <code>${escapeHtml(props.kind)}</code>` : ''}, sorted by ${escapeHtml(labelForSort(props.sort).toLowerCase())}`;
 
   const table = renderLeaderTable(props.hits, {
-    valueLabel: labelForSort(props.sort),
+    valueLabel: columnHeaderForSort(props.sort),
     formatValue: (r) => valueForSort(r as RowForList, props.sort),
     // Hide the stars-delta column when sorting by stars — it'd be the same
     // column twice — but show it elsewhere so users see the trend.
