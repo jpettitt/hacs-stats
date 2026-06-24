@@ -11,6 +11,11 @@ export interface RowForList {
   /** Display name from the repo's hacs.json. null when not set / not yet backfilled. */
   hacs_name?: string | null;
   kind: string;
+  /** default | discovered | submitted — shown as a small badge in listings. */
+  source?: string;
+  /** GitHub fork flag — surfaced as a "fork" badge alongside source. */
+  is_fork?: number;
+  archived?: number;
   stars: number;
   latest_release_downloads?: number;
   latest_release_tag?: string | null;
@@ -68,6 +73,20 @@ export function repoLink(fullName: string, hacsName?: string | null): string {
 
 export function kindLabel(kind: string): string {
   return escapeHtml(KIND_LABEL[kind] ?? kind);
+}
+
+/**
+ * Small inline badges describing where a repo came from + whether it's a
+ * fork or archived. Returns "" for the common case (HACS-default, not a
+ * fork, not archived) so listings don't get cluttered.
+ */
+export function repoTags(row: { source?: string; is_fork?: number; archived?: number }): string {
+  const tags: string[] = [];
+  if (row.source === 'discovered') tags.push('<span class="tag tag-discovered">discovered</span>');
+  if (row.source === 'submitted') tags.push('<span class="tag tag-submitted">submitted</span>');
+  if (row.is_fork) tags.push('<span class="tag tag-fork">fork</span>');
+  if (row.archived) tags.push('<span class="tag tag-archived">archived</span>');
+  return tags.length ? ` ${tags.join(' ')}` : '';
 }
 
 export interface LeaderTableOptions {
@@ -145,7 +164,7 @@ export function renderLeaderTable(rows: RowForList[], opts: LeaderTableOptions):
   const body = rows
     .map(
       (r) => `<tr>
-        <td>${repoLink(r.full_name, r.hacs_name)}</td>
+        <td>${repoLink(r.full_name, r.hacs_name)}${repoTags(r)}</td>
         ${showDesc ? `<td class="desc-col muted small">${r.description ? escapeHtml(clip(r.description, 110)) : ''}</td>` : ''}
         <td class="kind">${kindLabel(r.kind)}</td>
         <td class="num">${opts.formatValue(r)}</td>

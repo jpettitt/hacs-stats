@@ -124,6 +124,7 @@ export interface UpdateRepoMetadataInput {
   repoId: number;
   description: string | null;
   archived: boolean;
+  isFork: boolean;
   defaultBranch: string | null;
 }
 
@@ -139,8 +140,16 @@ export interface UpdateRepoMetadataInput {
  */
 export function updateRepoMetadata(db: Db, input: UpdateRepoMetadataInput): void {
   db.raw
-    .prepare('UPDATE repos SET description = ?, archived = ?, default_branch = ? WHERE id = ?')
-    .run(input.description, input.archived ? 1 : 0, input.defaultBranch, input.repoId);
+    .prepare(
+      'UPDATE repos SET description = ?, archived = ?, is_fork = ?, default_branch = ? WHERE id = ?',
+    )
+    .run(
+      input.description,
+      input.archived ? 1 : 0,
+      input.isFork ? 1 : 0,
+      input.defaultBranch,
+      input.repoId,
+    );
 }
 
 export interface CategoryCount {

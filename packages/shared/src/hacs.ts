@@ -25,6 +25,7 @@ export interface Repo {
   hacs_name: string | null;
   description: string | null;
   archived: number;
+  is_fork: number;
   default_branch: string | null;
   first_seen_at: string;
   last_scraped_at: string | null;

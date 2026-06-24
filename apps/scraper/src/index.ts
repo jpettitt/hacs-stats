@@ -173,6 +173,7 @@ async function ingest(): Promise<IngestResult> {
             repoId,
             description: m.description,
             archived: m.archived ?? false,
+            isFork: m.isFork ?? false,
             defaultBranch: m.defaultBranch,
           });
           snapshotsWritten++;

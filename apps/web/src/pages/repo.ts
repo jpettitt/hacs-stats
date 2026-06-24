@@ -1,4 +1,4 @@
-import { fmtDelta, fmtInt, kindLabel } from '../components.js';
+import { fmtDelta, fmtInt, kindLabel, repoTags } from '../components.js';
 import { escapeHtml, safeGithubRepoUrl } from '../sanitize.js';
 import { renderLineChart } from '../svg-chart.js';
 
@@ -6,6 +6,8 @@ export interface RepoDetailProps {
   full_name: string;
   hacs_name: string | null;
   kind: string;
+  source: string;
+  is_fork: number;
   description: string | null;
   archived: number;
   hacs_filename: string | null;
@@ -60,7 +62,13 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
       ? `<p class="muted small subtitle"><a href="${ghUrl}" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a></p>`
       : '';
 
-  const archivedBadge = detail.archived ? ' <span class="badge badge-muted">archived</span>' : '';
+  // Source / fork / archived tags. archivedBadge stays variable-named for
+  // diff continuity but actually emits the full set via repoTags().
+  const archivedBadge = repoTags({
+    source: detail.source,
+    is_fork: detail.is_fork,
+    archived: detail.archived,
+  });
 
   const description = detail.description
     ? `<p class="lead">${escapeHtml(detail.description)}</p>`

@@ -12,8 +12,11 @@ export interface LeaderRow {
   full_name: string;
   hacs_name: string | null;
   kind: RepoKind;
+  /** default | discovered | submitted — see RepoSource. */
+  source: string;
   description: string | null;
   archived: number;
+  is_fork: number;
   stars: number;
   /** Cumulative downloads on the repo's latest non-prerelease release. */
   latest_release_downloads: number;
@@ -36,7 +39,7 @@ export interface LeaderRow {
 
 const LEADER_SELECT = `
   SELECT
-    r.id, r.full_name, r.hacs_name, r.kind, r.description, r.archived,
+    r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork,
     r.first_seen_at,
     COALESCE(latest.stars, 0)                         AS stars,
     latest.last_commit_at,
@@ -242,8 +245,8 @@ export function repoDetailByFullName(db: Db, fullName: string): RepoDetail | und
   return db.raw
     .prepare<[string], RepoDetail>(
       `${LEADER_SELECT.replace(
-        'r.id, r.full_name, r.hacs_name, r.kind, r.description, r.archived,',
-        'r.id, r.full_name, r.hacs_name, r.kind, r.description, r.archived, r.owner, r.name, r.hacs_filename, r.default_branch, r.last_scraped_at,',
+        'r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork,',
+        'r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork, r.owner, r.name, r.hacs_filename, r.default_branch, r.last_scraped_at,',
       )} WHERE r.full_name = ?`,
     )
     .get(fullName);

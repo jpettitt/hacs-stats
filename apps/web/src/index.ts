@@ -1,22 +1,32 @@
-import { leaders, openDb, repos, resolveDatabasePath } from '@hacs-stats/db';
+import { discoveryQueue, leaders, openDb, repos, resolveDatabasePath } from '@hacs-stats/db';
 import type { RepoKind } from '@hacs-stats/shared';
 import { REPO_KINDS } from '@hacs-stats/shared';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { renderLayout } from './layout.js';
 import { renderAboutPage } from './pages/about.js';
+import { renderAdminPage } from './pages/admin.js';
 import { renderCategoriesIndex, renderCategoryPage } from './pages/category.js';
 import { renderHome } from './pages/home.js';
 import { renderRepoDetail } from './pages/repo.js';
 import { renderSearchPage } from './pages/search.js';
+import { renderSubmitPage } from './pages/submit.js';
 import { isSafeRepoFullName } from './sanitize.js';
 
 const DATABASE_PATH = resolveDatabasePath();
 const PORT = Number(process.env.PORT ?? 3000);
+const ADMIN_USER = process.env.ADMIN_USER;
+const ADMIN_PASS = process.env.ADMIN_PASS;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
-// Web is strictly a reader — open read-only so we can never accidentally write
-// from the user-facing process. The scraper holds the only RW handle.
+// Two SQLite handles to the same WAL'd file:
+//   db   — readonly, used by every public route. Belt-and-braces guard
+//          against a sanitisation bug leading to an accidental write.
+//   rwDb — read-write, ONLY used by /submit and /admin/*. Those routes
+//          are the few places the web process legitimately writes
+//          (discovery_queue inserts + status updates, repos accept).
 const db = openDb({ path: DATABASE_PATH, mode: 'readonly' });
+const rwDb = openDb({ path: DATABASE_PATH, mode: 'readwrite' });
 
 const VALID_KINDS = new Set<string>(REPO_KINDS);
 const isRepoKind = (s: string): s is RepoKind => VALID_KINDS.has(s);
@@ -138,6 +148,8 @@ app.get('/r/:owner/:name', (c) => {
       full_name: detail.full_name,
       hacs_name: detail.hacs_name,
       kind: detail.kind,
+      source: detail.source,
+      is_fork: detail.is_fork,
       description: detail.description,
       archived: detail.archived,
       hacs_filename: detail.hacs_filename,
@@ -220,7 +232,6 @@ app.get('/search', (c) => {
   return c.html(
     renderLayout({
       title,
-      navActive: 'search',
       searchValue: q,
       body,
     }),
@@ -232,6 +243,172 @@ app.get('/about', (c) =>
     renderLayout({ title: 'About — hacs-stats', navActive: 'about', body: renderAboutPage() }),
   ),
 );
+
+// ---------------------------------------------------------------------------
+// /submit — public submission form for custom HACS repos.
+// ---------------------------------------------------------------------------
+
+app.get('/submit', (c) =>
+  c.html(
+    renderLayout({
+      title: 'Submit a repo — hacs-stats',
+      body: renderSubmitPage({}),
+    }),
+  ),
+);
+
+const FAILURE_TEXT: Record<string, string> = {
+  'invalid-name': 'That doesn’t look like a valid owner/repo identifier.',
+  'repo-not-found': 'GitHub doesn’t know that repo. Check the spelling?',
+  'private-or-removed': 'That repo is private or has been removed.',
+  'no-hacs-json': 'No hacs.json at the repository root. HACS needs one.',
+  'malformed-hacs-json': 'Found a hacs.json, but it wouldn’t parse.',
+  'not-meaningful':
+    'The hacs.json is missing every HACS-meaningful field. Likely a false positive.',
+  'network-error': 'Couldn’t reach GitHub right now. Try again in a minute.',
+};
+
+app.post('/submit', async (c) => {
+  const body = await c.req.parseBody();
+  const repoRaw = typeof body.repo === 'string' ? body.repo.trim() : '';
+  const kindRaw = typeof body.kind === 'string' ? body.kind : '';
+  if (!repoRaw || !(REPO_KINDS as readonly string[]).includes(kindRaw)) {
+    return c.html(
+      renderLayout({
+        title: 'Submit a repo — hacs-stats',
+        body: renderSubmitPage({
+          value: repoRaw,
+          message: { kind: 'err', text: 'Both fields are required.' },
+        }),
+      }),
+    );
+  }
+  const { validateSubmission } = await import('./submit-validation.js');
+  const result = await validateSubmission(repoRaw, { token: GITHUB_TOKEN });
+  if (!result.ok) {
+    return c.html(
+      renderLayout({
+        title: 'Submit a repo — hacs-stats',
+        body: renderSubmitPage({
+          value: repoRaw,
+          message: {
+            kind: 'err',
+            text: (result.failure && FAILURE_TEXT[result.failure]) || 'Validation failed.',
+          },
+        }),
+      }),
+    );
+  }
+  const url = `https://github.com/${repoRaw}`;
+  const notes = `kind=${kindRaw}${result.notes ? `; ${result.notes}` : ''}`;
+  discoveryQueue.enqueueDiscovery(rwDb, { url, source: 'user_submission', notes });
+  return c.html(
+    renderLayout({
+      title: 'Submission received — hacs-stats',
+      body: renderSubmitPage({
+        message: {
+          kind: 'ok',
+          text: `Thanks — ${repoRaw} is queued for review and should appear in the catalogue after the next scrape if accepted.`,
+        },
+      }),
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// /admin — HTTP-basic-auth gated queue review.
+// ---------------------------------------------------------------------------
+
+function adminGate(c: { req: { header(name: string): string | undefined } }):
+  | { ok: true }
+  | { ok: false; status: 401 | 503 } {
+  if (!ADMIN_USER || !ADMIN_PASS) return { ok: false, status: 503 };
+  const auth = c.req.header('authorization') ?? '';
+  if (!auth.toLowerCase().startsWith('basic ')) return { ok: false, status: 401 };
+  let decoded: string;
+  try {
+    decoded = atob(auth.slice(6));
+  } catch {
+    return { ok: false, status: 401 };
+  }
+  const idx = decoded.indexOf(':');
+  if (idx < 0) return { ok: false, status: 401 };
+  const user = decoded.slice(0, idx);
+  const pass = decoded.slice(idx + 1);
+  if (user !== ADMIN_USER || pass !== ADMIN_PASS) return { ok: false, status: 401 };
+  return { ok: true };
+}
+
+function adminChallenge(): Response {
+  return new Response('admin auth required', {
+    status: 401,
+    headers: { 'WWW-Authenticate': 'Basic realm="hacs-stats admin"' },
+  });
+}
+
+app.get('/admin/queue', (c) => {
+  const gate = adminGate(c);
+  if (!gate.ok) {
+    if (gate.status === 503) return c.text('admin endpoint not configured', 503);
+    return adminChallenge();
+  }
+  const pending = discoveryQueue.listQueueByStatus(db, 'pending', 200);
+  const totals = discoveryQueue.countQueueByStatus(db);
+  const msg = c.req.query('msg');
+  return c.html(
+    renderLayout({
+      title: 'Admin · queue — hacs-stats',
+      body: renderAdminPage({
+        pending,
+        totals,
+        ...(msg !== undefined ? { flash: msg } : {}),
+      }),
+    }),
+  );
+});
+
+app.post('/admin/queue/decide', async (c) => {
+  const gate = adminGate(c);
+  if (!gate.ok) {
+    if (gate.status === 503) return c.text('admin endpoint not configured', 503);
+    return adminChallenge();
+  }
+  const body = await c.req.parseBody();
+  const url = typeof body.url === 'string' ? body.url : '';
+  const decision = typeof body.decision === 'string' ? body.decision : '';
+  if (!url || (decision !== 'accept' && decision !== 'reject')) {
+    return c.redirect('/admin/queue?msg=bad+request', 303);
+  }
+  if (decision === 'reject') {
+    discoveryQueue.setQueueStatus(rwDb, url, 'rejected', null);
+    return c.redirect('/admin/queue?msg=rejected', 303);
+  }
+  const m = /github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(url);
+  if (!m || !m[1] || !m[2]) {
+    return c.redirect('/admin/queue?msg=cant+parse+url', 303);
+  }
+  const owner = m[1];
+  const name = m[2];
+  const item = db.raw
+    .prepare<[string], { source: string; notes: string | null }>(
+      'SELECT source, notes FROM discovery_queue WHERE url = ?',
+    )
+    .get(url);
+  const kindMatch = item?.notes ? /(?:^|;\s*)kind=([a-z_]+)/.exec(item.notes) : null;
+  const kindFromNotes = kindMatch?.[1] ?? 'integration';
+  if (!(REPO_KINDS as readonly string[]).includes(kindFromNotes)) {
+    return c.redirect('/admin/queue?msg=invalid+kind+in+notes', 303);
+  }
+  const source = item?.source === 'user_submission' ? 'submitted' : 'discovered';
+  repos.upsertRepo(rwDb, {
+    owner,
+    name,
+    kind: kindFromNotes as RepoKind,
+    source,
+  });
+  discoveryQueue.setQueueStatus(rwDb, url, 'accepted', null);
+  return c.redirect(`/admin/queue?msg=accepted+${owner}/${name}`, 303);
+});
 
 // JSON API — surface enough for clients to render their own dashboards.
 app.get('/api/stats/overview', (c) =>
@@ -263,6 +440,7 @@ const shutdown = (signal: string) => {
   console.log(`\n${signal} received, shutting down…`);
   server.close(() => {
     db.close();
+    rwDb.close();
     process.exit(0);
   });
 };

@@ -6,7 +6,7 @@ export interface LayoutProps {
   /** What to put in the <h1>. Defaults to "hacs-stats". */
   pageHeading?: string;
   /** Active nav item key for highlighting. */
-  navActive?: 'home' | 'categories' | 'search' | 'about';
+  navActive?: 'home' | 'categories' | 'submit' | 'about';
   /** Optional inline search-box value to keep the query visible after submit. */
   searchValue?: string;
   /** Pre-rendered HTML body (escape your own inputs upstream!). */
@@ -211,6 +211,25 @@ section > h2 { margin-bottom: .75rem; }
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 
+/* ---------- tags (source / fork / archived) ------------------------- */
+.tag {
+  display: inline-block;
+  padding: .05rem .4rem;
+  border-radius: .25rem;
+  font-size: .7rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em;
+  vertical-align: middle;
+  border: 1px solid transparent;
+}
+.tag-discovered { color: var(--accent); border-color: var(--accent); }
+.tag-submitted  { color: #047857; border-color: #047857; }
+.tag-fork       { color: #92400e; border-color: #92400e; }
+.tag-archived   { color: var(--text-dimmer); border-color: var(--text-dimmer); }
+@media (prefers-color-scheme: dark) {
+  .tag-submitted { color: #34d399; border-color: #34d399; }
+  .tag-fork      { color: #fbbf24; border-color: #fbbf24; }
+}
+
 /* ---------- pagination ---------------------------------------------- */
 .pagination {
   display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
@@ -355,6 +374,7 @@ export function renderLayout(props: LayoutProps): string {
     <nav>
       ${navLink('/', 'Home', 'home', props.navActive)}
       ${navLink('/categories', 'Categories', 'categories', props.navActive)}
+      ${navLink('/submit', 'Submit', 'submit', props.navActive)}
       ${navLink('/about', 'About', 'about', props.navActive)}
     </nav>
     <form action="/search" method="get" role="search">
