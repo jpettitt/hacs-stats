@@ -253,6 +253,37 @@ section > h2 { margin-bottom: .75rem; }
 .pagination .page-disabled { color: var(--text-dimmer); background: var(--bg); cursor: not-allowed; }
 .pagination .page-current { background: var(--accent); color: white; }
 
+/* ---------- submit form (stacked, generously sized) ----------------- */
+.submit-form {
+  display: grid; gap: 1rem;
+  max-width: 36rem;
+  margin: 1.5rem 0;
+  padding: 1.25rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+}
+.submit-field { display: grid; gap: .35rem; }
+.submit-field label { font-size: .9rem; font-weight: 600; color: var(--text); }
+.submit-form input[type="text"],
+.submit-form select {
+  font: inherit; padding: .65rem .85rem; font-size: 1.05rem;
+  border: 1px solid var(--border-strong); border-radius: .4rem;
+  background: var(--bg); color: var(--text);
+  width: 100%;
+}
+.submit-form input:focus,
+.submit-form select:focus {
+  outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
+}
+.submit-form button {
+  justify-self: start;
+  font: inherit; padding: .6rem 1.25rem; font-size: 1.05rem; font-weight: 600;
+  border: 1px solid var(--accent); border-radius: .4rem;
+  background: var(--accent); color: white; cursor: pointer;
+}
+.submit-form button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
 /* ---------- filter bar (search results) ----------------------------- */
 .filter-bar {
   display: flex; gap: .5rem; flex-wrap: wrap; align-items: center;

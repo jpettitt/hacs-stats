@@ -25,23 +25,29 @@ export function renderSubmitPage(props: SubmitPageProps): string {
       our catalogue on the next daily scrape.
     </p>
     ${msg}
-    <form class="filter-bar" action="/submit" method="post">
-      <label class="visually-hidden" for="repo">owner/repo</label>
-      <input id="repo" type="text" name="repo" value="${safeVal}"
-             placeholder="owner/repo (e.g. jpettitt/geo-clock-card)"
-             autocomplete="off" required>
-      <label class="visually-hidden" for="kind">HACS category</label>
-      <select id="kind" name="kind" required>
-        <option value="">— category —</option>
-        <option value="integration">Integration</option>
-        <option value="plugin">Plugin / Lovelace card</option>
-        <option value="theme">Theme</option>
-        <option value="appdaemon">AppDaemon</option>
-        <option value="netdaemon">NetDaemon</option>
-        <option value="python_script">Python script</option>
-        <option value="template">Template</option>
-      </select>
-      <button type="submit">Submit</button>
+    <form class="submit-form" action="/submit" method="post">
+      <div class="submit-field">
+        <label for="repo">GitHub repo (<code>owner/repo</code>)</label>
+        <input id="repo" type="text" name="repo" value="${safeVal}"
+               placeholder="e.g. piitaya/lovelace-mushroom"
+               autocomplete="off" autocapitalize="none" spellcheck="false" required>
+      </div>
+      <div class="submit-field">
+        <label for="kind">HACS category</label>
+        <select id="kind" name="kind" required>
+          <option value="">— pick one —</option>
+          <option value="integration">Integration</option>
+          <option value="plugin">Plugin / Lovelace card</option>
+          <option value="theme">Theme</option>
+          <option value="appdaemon">AppDaemon</option>
+          <option value="netdaemon">NetDaemon</option>
+          <option value="python_script">Python script</option>
+          <option value="template">Template</option>
+        </select>
+      </div>
+      <div class="submit-field">
+        <button type="submit">Submit for review</button>
+      </div>
     </form>
     <h3>What we check</h3>
     <ul>
