@@ -68,47 +68,54 @@ async function ingest(): Promise<IngestResult> {
     console.log(`[scrape] applied ${migrations.applied.length} migration(s):`, migrations.applied);
   }
 
-  // --- Phase 2 step: HACS default lists -----------------------------------
+  // --- Phase 2 step 1a: HACS default list catalogue refresh --------------
   let listEntries = 0;
-  let manifests: IngestResult['manifests'] = null;
   if (SKIP_DEFAULTS) {
-    console.log('[scrape] step 1/3 — SKIP_DEFAULTS=1, reusing existing repos table');
+    console.log('[scrape] step 1a — SKIP_DEFAULTS=1, reusing existing default-list repos');
   } else {
-    console.log('[scrape] step 1/3 — fetching HACS default lists');
+    console.log('[scrape] step 1a — fetching HACS default lists');
     const { entries, byKind } = await fetchAllDefaultLists({ bearerToken: GITHUB_TOKEN });
     listEntries = entries.length;
     console.log(
       `[scrape]   ${entries.length} repos across ${Object.keys(byKind).length} categories`,
     );
-
     const upsertAll = db.raw.transaction((rows: typeof entries) => {
       for (const r of rows) {
         repos.upsertRepo(db, { owner: r.owner, name: r.name, kind: r.kind, source: 'default' });
       }
     });
     upsertAll(entries);
+  }
 
-    // hacs.json fetch happens only for repos missing EITHER the filename OR
-    // the display name — picks up new repos AND backfills hacs_name on repos
-    // that were scraped before that column existed. Refreshing it daily for
-    // 3k repos that haven't changed is wasted work.
-    const needManifest = entries.filter((e) => {
-      const row = repos.getRepoByFullName(db, e.fullName);
-      return row && (row.hacs_filename === null || row.hacs_name === null);
-    });
-    console.log(
-      `[scrape]   fetching hacs.json for ${needManifest.length} new/backfill repos (concurrency ${MANIFEST_CONCURRENCY})`,
-    );
+  // --- Phase 2 step 1b: hacs.json backfill --------------------------------
+  // Targets EVERY repo in the catalogue missing either hacs_filename or
+  // hacs_name, not just default-list entries. Originally the manifest fetch
+  // was nested inside step 1a and filtered to `entries` — that worked for
+  // default-list repos but silently skipped submitted/discovered repos
+  // (Phase 6 additions), which then displayed without their hacs.json name
+  // or canonical asset filename forever. Pull it out as its own step so it
+  // runs regardless of SKIP_DEFAULTS and covers every row.
+  console.log('[scrape] step 1b — backfilling hacs.json for repos missing it');
+  const needManifest = db.raw
+    .prepare<[], { full_name: string }>(
+      'SELECT full_name FROM repos WHERE hacs_filename IS NULL OR hacs_name IS NULL ORDER BY id',
+    )
+    .all();
+  console.log(
+    `[scrape]   ${needManifest.length} repos need a manifest (concurrency ${MANIFEST_CONCURRENCY})`,
+  );
 
+  let manifests: IngestResult['manifests'] = null;
+  if (needManifest.length > 0) {
     let fetched = 0;
     let withFilename = 0;
     let failures = 0;
     const results = await mapLimit(needManifest, MANIFEST_CONCURRENCY, async (e) => {
-      const m = await fetchHacsManifest(e.fullName, { bearerToken: GITHUB_TOKEN });
+      const m = await fetchHacsManifest(e.full_name, { bearerToken: GITHUB_TOKEN });
       const filename = manifestFilename(m);
       const name = manifestName(m);
       repos.setHacsManifest(db, {
-        fullName: e.fullName,
+        fullName: e.full_name,
         hacsFilename: filename,
         hacsName: name,
       });
