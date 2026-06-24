@@ -1,27 +1,117 @@
+import { type RowForList, fmtInt, kindLabel, renderLeaderTable, repoLink } from '../components.js';
+import { escapeHtml } from '../sanitize.js';
+
+export type LeaderRow = RowForList;
+
 export interface HomeProps {
   repoCount: number;
+  topByStars: LeaderRow[];
+  topByDownloads: LeaderRow[];
+  trendingByStars: LeaderRow[];
+  newArrivals: LeaderRow[];
+  recentlyUpdated: LeaderRow[];
 }
 
-export function renderHome({ repoCount }: HomeProps): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>hacs-stats — design phase</title>
-  <style>
-    body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem; color: #1a1a1a; }
-    h1 { margin: 0 0 .5rem; }
-    .lead { color: #555; }
-    .stat { margin: 2rem 0; padding: 1rem 1.25rem; background: #f3f4f6; border-radius: .5rem; }
-    code { background: #e5e7eb; padding: .1rem .3rem; border-radius: .25rem; }
-  </style>
-</head>
-<body>
-  <h1>hacs-stats</h1>
-  <p class="lead">Unofficial usage stats for HACS — Home Assistant Community Store.</p>
-  <div class="stat">Tracking <strong>${repoCount}</strong> repositories.</div>
-  <p>Phase 1 scaffold. See <code>ARCHITECTURE.md</code> for the design.</p>
-</body>
-</html>`;
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  return escapeHtml(iso.slice(0, 10));
+}
+
+function descCell(d: string | null | undefined, max = 90): string {
+  if (!d) return '<td class="desc-col muted small"></td>';
+  const trimmed = d.length > max ? `${d.slice(0, max - 1).trimEnd()}…` : d;
+  return `<td class="desc-col muted small">${escapeHtml(trimmed)}</td>`;
+}
+
+export function renderHome(props: HomeProps): string {
+  const { repoCount, topByStars, topByDownloads, trendingByStars, newArrivals, recentlyUpdated } =
+    props;
+
+  const trendingNote =
+    trendingByStars.length === 0
+      ? '<p class="muted small">No 7-day star deltas yet. After two daily scrapes, repos that picked up new stars will appear here.</p>'
+      : '';
+
+  return `
+    <p class="lead">Public download &amp; star stats for the Home Assistant Community Store.</p>
+
+    <div class="stat">Tracking <strong>${escapeHtml(fmtInt(repoCount))}</strong> repositories across the HACS catalogue.</div>
+
+    <section>
+      <h2>Top by stars</h2>
+      ${renderLeaderTable(topByStars, {
+        valueLabel: 'Stars',
+        formatValue: (r) => escapeHtml(fmtInt(r.stars)),
+        showStarDelta: false,
+      })}
+    </section>
+
+    <section>
+      <h2>Top by downloads</h2>
+      <p class="lead small">
+        Cumulative downloads of the HACS-asset on each repo's latest stable
+        release — closest proxy we have for current install base. Prereleases
+        are excluded so a 0.0.0-rc upload doesn't displace the real number.
+      </p>
+      ${renderLeaderTable(topByDownloads, {
+        valueLabel: 'Downloads',
+        // Version on its OWN line beneath the number so digits stay
+        // right-aligned across rows (variable-length tags like "v0.13.0"
+        // vs "v5" otherwise push numbers to different columns).
+        formatValue: (r) =>
+          `${escapeHtml(fmtInt(r.latest_release_downloads ?? 0))}${
+            r.latest_release_tag
+              ? `<br><span class="muted small">${escapeHtml(r.latest_release_tag)}</span>`
+              : ''
+          }`,
+      })}
+    </section>
+
+    <section>
+      <h2>Trending (7-day star delta)</h2>
+      ${trendingNote}
+      ${renderLeaderTable(trendingByStars, {
+        valueLabel: 'Stars Δ 7d',
+        formatValue: (r) => escapeHtml(`+${fmtInt(r.star_delta_30d)}`),
+        showStarDelta: false,
+      })}
+    </section>
+
+    <section>
+      <h2>Recently active</h2>
+      <p class="lead small">Most recent commit on the default branch.</p>
+      <table>
+        <thead><tr><th>Repo</th><th class="desc-col">Description</th><th>Kind</th><th class="num">Last commit</th><th class="num">Stars</th></tr></thead>
+        <tbody>${recentlyUpdated
+          .map(
+            (r) => `<tr>
+              <td>${repoLink(r.full_name, r.hacs_name)}</td>
+              ${descCell(r.description)}
+              <td class="kind">${kindLabel(r.kind)}</td>
+              <td class="num small">${fmtDate(r.last_commit_at)}</td>
+              <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
+            </tr>`,
+          )
+          .join('')}</tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>New arrivals</h2>
+      <p class="lead small">Recently added to the HACS default lists.</p>
+      <table>
+        <thead><tr><th>Repo</th><th class="desc-col">Description</th><th>Kind</th><th class="num">First seen</th></tr></thead>
+        <tbody>${newArrivals
+          .map(
+            (r) => `<tr>
+              <td>${repoLink(r.full_name, r.hacs_name)}</td>
+              ${descCell(r.description)}
+              <td class="kind">${kindLabel(r.kind)}</td>
+              <td class="num small">${fmtDate(r.first_seen_at)}</td>
+            </tr>`,
+          )
+          .join('')}</tbody>
+      </table>
+    </section>
+  `;
 }

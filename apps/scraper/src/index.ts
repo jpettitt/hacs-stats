@@ -10,16 +10,27 @@ import { mapLimit } from './concurrency.js';
 import { fetchRepoMetadataBatches } from './github-graphql.js';
 import { fetchReleases } from './github-releases.js';
 import { fetchAllDefaultLists } from './hacs-default.js';
-import { fetchHacsManifest, manifestFilename } from './hacs-manifest.js';
+import { fetchHacsManifest, manifestFilename, manifestName } from './hacs-manifest.js';
 import { RateLimitGuard } from './rate-limit.js';
+import { applyRetention } from './retention.js';
+import { computeStatsCache } from './rollup.js';
 import { todayUtcIsoDate } from './snapshot-date.js';
 
 const DATABASE_PATH = resolveDatabasePath();
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const MANIFEST_CONCURRENCY = Number(process.env.MANIFEST_CONCURRENCY ?? 12);
 const RELEASES_CONCURRENCY = Number(process.env.RELEASES_CONCURRENCY ?? 12);
-const SCRAPE_LIMIT = process.env.SCRAPE_LIMIT ? Number(process.env.SCRAPE_LIMIT) : undefined;
+// `process.env.SCRAPE_LIMIT ? …` would treat '0' as truthy (non-empty string)
+// AND `0` as falsy after Number(), then `LIMIT 0` would silently become "no
+// limit" — exactly the surprising behaviour we DON'T want. Explicitly check
+// for undefined so SCRAPE_LIMIT=0 means "0 repos".
+const SCRAPE_LIMIT =
+  process.env.SCRAPE_LIMIT !== undefined ? Number(process.env.SCRAPE_LIMIT) : undefined;
 const SKIP_DEFAULTS = process.env.SKIP_DEFAULTS === '1';
+// SNAPSHOT_DATE=YYYY-MM-DD overrides the UTC "today" for this run. Lets dev
+// fabricate multi-day history without waiting for UTC midnight. Logged
+// loudly when set so a fake-time run isn't mistaken for a real one.
+const SNAPSHOT_DATE = process.env.SNAPSHOT_DATE;
 
 interface IngestResult {
   defaults: { listEntries: number; reposAfter: number };
@@ -33,13 +44,22 @@ interface IngestResult {
     assetSnapshotsWritten: number;
     failures: number;
   } | null;
+  rollup: { rowsWritten: number; durationSec: number; asOfDate: string };
+  retention: {
+    repoSnapshotsDeleted: number;
+    assetSnapshotsDeleted: number;
+    durationSec: number;
+  };
   rateLimit: { remaining: number };
   durationSec: number;
 }
 
 async function ingest(): Promise<IngestResult> {
   const t0 = process.hrtime.bigint();
-  const today = todayUtcIsoDate();
+  const today = SNAPSHOT_DATE ?? todayUtcIsoDate();
+  if (SNAPSHOT_DATE) {
+    console.log(`[scrape] ⚠️  SNAPSHOT_DATE=${SNAPSHOT_DATE} — writing under a FAKE date`);
+  }
   const guard = new RateLimitGuard();
   const db = openDb({ path: DATABASE_PATH });
 
@@ -48,44 +68,57 @@ async function ingest(): Promise<IngestResult> {
     console.log(`[scrape] applied ${migrations.applied.length} migration(s):`, migrations.applied);
   }
 
-  // --- Phase 2 step: HACS default lists -----------------------------------
+  // --- Phase 2 step 1a: HACS default list catalogue refresh --------------
   let listEntries = 0;
-  let manifests: IngestResult['manifests'] = null;
   if (SKIP_DEFAULTS) {
-    console.log('[scrape] step 1/3 — SKIP_DEFAULTS=1, reusing existing repos table');
+    console.log('[scrape] step 1a — SKIP_DEFAULTS=1, reusing existing default-list repos');
   } else {
-    console.log('[scrape] step 1/3 — fetching HACS default lists');
+    console.log('[scrape] step 1a — fetching HACS default lists');
     const { entries, byKind } = await fetchAllDefaultLists({ bearerToken: GITHUB_TOKEN });
     listEntries = entries.length;
     console.log(
       `[scrape]   ${entries.length} repos across ${Object.keys(byKind).length} categories`,
     );
-
     const upsertAll = db.raw.transaction((rows: typeof entries) => {
       for (const r of rows) {
         repos.upsertRepo(db, { owner: r.owner, name: r.name, kind: r.kind, source: 'default' });
       }
     });
     upsertAll(entries);
+  }
 
-    // hacs.json fetch happens only for repos whose `hacs_filename` is still
-    // null (first-seen, or wiped). Refreshing it daily for 3k repos is wasted
-    // work — manifests rarely change.
-    const needManifest = entries.filter((e) => {
-      const row = repos.getRepoByFullName(db, e.fullName);
-      return row && row.hacs_filename === null;
-    });
-    console.log(
-      `[scrape]   fetching hacs.json for ${needManifest.length} new repos (concurrency ${MANIFEST_CONCURRENCY})`,
-    );
+  // --- Phase 2 step 1b: hacs.json backfill --------------------------------
+  // Targets EVERY repo in the catalogue missing either hacs_filename or
+  // hacs_name, not just default-list entries. Originally the manifest fetch
+  // was nested inside step 1a and filtered to `entries` — that worked for
+  // default-list repos but silently skipped submitted/discovered repos
+  // (Phase 6 additions), which then displayed without their hacs.json name
+  // or canonical asset filename forever. Pull it out as its own step so it
+  // runs regardless of SKIP_DEFAULTS and covers every row.
+  console.log('[scrape] step 1b — backfilling hacs.json for repos missing it');
+  const needManifest = db.raw
+    .prepare<[], { full_name: string }>(
+      'SELECT full_name FROM repos WHERE hacs_filename IS NULL OR hacs_name IS NULL ORDER BY id',
+    )
+    .all();
+  console.log(
+    `[scrape]   ${needManifest.length} repos need a manifest (concurrency ${MANIFEST_CONCURRENCY})`,
+  );
 
+  let manifests: IngestResult['manifests'] = null;
+  if (needManifest.length > 0) {
     let fetched = 0;
     let withFilename = 0;
     let failures = 0;
     const results = await mapLimit(needManifest, MANIFEST_CONCURRENCY, async (e) => {
-      const m = await fetchHacsManifest(e.fullName, { bearerToken: GITHUB_TOKEN });
+      const m = await fetchHacsManifest(e.full_name, { bearerToken: GITHUB_TOKEN });
       const filename = manifestFilename(m);
-      repos.setHacsFilename(db, { fullName: e.fullName, hacsFilename: filename });
+      const name = manifestName(m);
+      repos.setHacsManifest(db, {
+        fullName: e.full_name,
+        hacsFilename: filename,
+        hacsName: name,
+      });
       return filename;
     });
     for (const r of results) {
@@ -100,7 +133,7 @@ async function ingest(): Promise<IngestResult> {
 
   const allRepos = repos.listAllRepoIdents(db, SCRAPE_LIMIT);
   console.log(
-    `[scrape]   ${allRepos.length} repos to snapshot${SCRAPE_LIMIT ? ` (SCRAPE_LIMIT=${SCRAPE_LIMIT})` : ''}`,
+    `[scrape]   ${allRepos.length} repos to snapshot${SCRAPE_LIMIT !== undefined ? ` (SCRAPE_LIMIT=${SCRAPE_LIMIT})` : ''}`,
   );
 
   // Token is required for Phase 3 — GraphQL needs auth, REST releases at
@@ -130,6 +163,11 @@ async function ingest(): Promise<IngestResult> {
           }
           const repoId = fullNameToId.get(m.fullName);
           if (repoId === undefined) continue;
+          // Two separate writes per repo:
+          //   - snapshot row (fast-moving: stars/forks/issues + last commit)
+          //   - repo row (slow-moving: description / archived / default_branch)
+          // The slow-moving fields are properties of the repo, not a daily
+          // measurement, so they live on `repos`, not on every snapshot.
           snapshots.upsertRepoSnapshot(db, {
             repoId,
             snapshotDate: today,
@@ -137,6 +175,13 @@ async function ingest(): Promise<IngestResult> {
             forks: m.forks ?? 0,
             openIssues: m.openIssues ?? 0,
             lastCommitAt: m.lastCommitAt,
+          });
+          repos.updateRepoMetadata(db, {
+            repoId,
+            description: m.description,
+            archived: m.archived ?? false,
+            isFork: m.isFork ?? false,
+            defaultBranch: m.defaultBranch,
           });
           snapshotsWritten++;
         }
@@ -228,6 +273,23 @@ async function ingest(): Promise<IngestResult> {
     };
   }
 
+  // --- Phase 4 step: rollup + retention -----------------------------------
+  // Always run, even when Phase 3 was skipped — keeps stats_cache and
+  // retention thresholds in sync with whatever data IS in the DB. Cheap.
+  console.log('[scrape] step 4/4 — recomputing stats_cache and applying retention');
+  const rollup = computeStatsCache(db, { asOfDate: today });
+  console.log(
+    `[scrape]   stats_cache: ${rollup.rowsWritten} rows (${rollup.durationSec.toFixed(2)}s)`,
+  );
+  const retention = applyRetention(db, { asOfDate: today });
+  if (retention.repoSnapshotsDeleted || retention.assetSnapshotsDeleted) {
+    console.log(
+      `[scrape]   retention: collapsed ${retention.repoSnapshotsDeleted} repo_snapshots, ${retention.assetSnapshotsDeleted} asset_snapshots`,
+    );
+  } else {
+    console.log('[scrape]   retention: nothing old enough to collapse yet');
+  }
+
   const reposAfter = repos.countRepos(db);
   db.close();
 
@@ -236,6 +298,8 @@ async function ingest(): Promise<IngestResult> {
     manifests,
     metadata,
     releases: releasesSummary,
+    rollup,
+    retention,
     rateLimit: { remaining: guard.snapshot().remaining },
     durationSec: Number(process.hrtime.bigint() - t0) / 1e9,
   };

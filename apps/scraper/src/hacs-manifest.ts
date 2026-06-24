@@ -56,3 +56,36 @@ export function manifestFilename(manifest: HacsManifest | null): string | null {
     ? manifest.filename
     : null;
 }
+
+/**
+ * Returns true if the string contains any ASCII control character (0x00-0x1F
+ * or 0x7F). Done as a charCode scan rather than a regex to dodge Biome's
+ * "no control characters in regex" warning — the regex form is technically
+ * fine for this use, but the lint message would have to be ignored on every
+ * future maintainer, and a small loop is just as clear.
+ */
+function hasControlChar(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return true;
+  }
+  return false;
+}
+
+/**
+ * Display name from `hacs.json`. Trimmed; rejected when:
+ *   - missing or non-string
+ *   - empty after trim
+ *   - longer than 120 chars (almost certainly junk / abuse)
+ *   - contains ASCII control characters (defence in depth — the render
+ *     layer escapes too, but we'd rather not store nasties in the first place)
+ *
+ * Unicode (emoji, accented letters, etc.) is allowed.
+ */
+export function manifestName(manifest: HacsManifest | null): string | null {
+  if (!manifest || typeof manifest.name !== 'string') return null;
+  const trimmed = manifest.name.trim();
+  if (trimmed.length === 0 || trimmed.length > 120) return null;
+  if (hasControlChar(trimmed)) return null;
+  return trimmed;
+}

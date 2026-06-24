@@ -21,8 +21,11 @@ export interface Repo {
   kind: RepoKind;
   source: RepoSource;
   hacs_filename: string | null;
+  /** Display name from the repo's hacs.json `name` field. Null if none. */
+  hacs_name: string | null;
   description: string | null;
   archived: number;
+  is_fork: number;
   default_branch: string | null;
   first_seen_at: string;
   last_scraped_at: string | null;

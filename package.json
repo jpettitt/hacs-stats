@@ -19,7 +19,8 @@
     "dev:web": "pnpm --filter @hacs-stats/web dev",
     "dev:scraper": "pnpm --filter @hacs-stats/scraper dev",
     "migrate": "tsx scripts/migrate.ts",
-    "seed": "tsx scripts/seed.ts"
+    "seed": "tsx scripts/seed.ts",
+    "discover": "tsx --env-file-if-exists=.env scripts/discover.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

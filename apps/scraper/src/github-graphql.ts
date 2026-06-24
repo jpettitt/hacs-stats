@@ -21,6 +21,7 @@ export interface RepoMetadata {
   lastCommitAt: string | null;
   description: string | null;
   archived: boolean | null;
+  isFork: boolean | null;
   defaultBranch: string | null;
 }
 
@@ -69,6 +70,7 @@ async function fetchOneBatch(
       defaultBranchRef { name target { ... on Commit { committedDate } } }
       description
       isArchived
+      isFork
     }
   `;
 
@@ -123,6 +125,7 @@ async function fetchOneBatch(
           } | null;
           description: string | null;
           isArchived: boolean;
+          isFork: boolean;
         }
       | null
       | undefined;
@@ -136,6 +139,7 @@ async function fetchOneBatch(
         lastCommitAt: null,
         description: null,
         archived: null,
+        isFork: null,
         defaultBranch: null,
       };
     }
@@ -147,6 +151,7 @@ async function fetchOneBatch(
       lastCommitAt: node.defaultBranchRef?.target?.committedDate ?? null,
       description: node.description,
       archived: node.isArchived,
+      isFork: node.isFork,
       defaultBranch: node.defaultBranchRef?.name ?? null,
     };
   });
