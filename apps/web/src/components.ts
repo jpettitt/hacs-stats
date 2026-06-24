@@ -12,6 +12,8 @@ export interface RowForList {
   hacs_name?: string | null;
   kind: string;
   stars: number;
+  latest_release_downloads?: number;
+  latest_release_tag?: string | null;
   downloads_30d: number;
   star_delta_30d: number;
   top_version_30d: string | null;
@@ -70,6 +72,13 @@ export function kindLabel(kind: string): string {
 
 export interface LeaderTableOptions {
   valueLabel: string;
+  /**
+   * Format one row's value cell. Returns trusted HTML — callers are
+   * responsible for escaping any untrusted strings they interpolate. This
+   * lets the caller compose richer cells (e.g. "12,345 (v3.5.0)" with the
+   * tag in muted text); the alternative — auto-escape — meant any HTML
+   * the caller wanted to inline got rendered as text.
+   */
   formatValue: (r: RowForList) => string;
   /** Hide the stars-delta column when sorting by stars (it would be redundant). */
   showStarDelta?: boolean;
@@ -139,7 +148,7 @@ export function renderLeaderTable(rows: RowForList[], opts: LeaderTableOptions):
         <td>${repoLink(r.full_name, r.hacs_name)}</td>
         ${showDesc ? `<td class="desc-col muted small">${r.description ? escapeHtml(clip(r.description, 110)) : ''}</td>` : ''}
         <td class="kind">${kindLabel(r.kind)}</td>
-        <td class="num">${escapeHtml(opts.formatValue(r))}</td>
+        <td class="num">${opts.formatValue(r)}</td>
         ${showDelta ? `<td class="num small">${escapeHtml(fmtDelta(r.star_delta_30d))}</td>` : ''}
       </tr>`,
     )

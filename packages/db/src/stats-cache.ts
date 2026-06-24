@@ -27,14 +27,17 @@ export function upsertStatsCacheRow(db: Db, row: StatsCacheRow): void {
     .prepare(`
       INSERT INTO stats_cache (
         repo_id, top_version_30d, top_version_downloads_30d,
-        total_downloads_30d, star_delta_7d, star_delta_30d, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        total_downloads_30d, star_delta_7d, star_delta_30d,
+        latest_release_tag, latest_release_downloads, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(repo_id) DO UPDATE SET
         top_version_30d           = excluded.top_version_30d,
         top_version_downloads_30d = excluded.top_version_downloads_30d,
         total_downloads_30d       = excluded.total_downloads_30d,
         star_delta_7d             = excluded.star_delta_7d,
         star_delta_30d            = excluded.star_delta_30d,
+        latest_release_tag        = excluded.latest_release_tag,
+        latest_release_downloads  = excluded.latest_release_downloads,
         updated_at                = excluded.updated_at
     `)
     .run(
@@ -44,6 +47,8 @@ export function upsertStatsCacheRow(db: Db, row: StatsCacheRow): void {
       row.total_downloads_30d,
       row.star_delta_7d,
       row.star_delta_30d,
+      row.latest_release_tag,
+      row.latest_release_downloads,
       row.updated_at,
     );
 }

@@ -15,6 +15,11 @@ export interface LeaderRow {
   description: string | null;
   archived: number;
   stars: number;
+  /** Cumulative downloads on the repo's latest non-prerelease release. */
+  latest_release_downloads: number;
+  latest_release_tag: string | null;
+  /** Velocity metric — sum of per-release deltas over 30 days. Kept for "trending"
+   * views; the headline number on listings is `latest_release_downloads`. */
   downloads_30d: number;
   star_delta_7d: number;
   star_delta_30d: number;
@@ -27,11 +32,13 @@ const LEADER_SELECT = `
   SELECT
     r.id, r.full_name, r.hacs_name, r.kind, r.description, r.archived,
     r.first_seen_at,
-    COALESCE(latest.stars, 0)            AS stars,
+    COALESCE(latest.stars, 0)                  AS stars,
     latest.last_commit_at,
-    COALESCE(sc.total_downloads_30d, 0)  AS downloads_30d,
-    COALESCE(sc.star_delta_7d, 0)        AS star_delta_7d,
-    COALESCE(sc.star_delta_30d, 0)       AS star_delta_30d,
+    COALESCE(sc.latest_release_downloads, 0)   AS latest_release_downloads,
+    sc.latest_release_tag,
+    COALESCE(sc.total_downloads_30d, 0)        AS downloads_30d,
+    COALESCE(sc.star_delta_7d, 0)              AS star_delta_7d,
+    COALESCE(sc.star_delta_30d, 0)             AS star_delta_30d,
     sc.top_version_30d
   FROM repos r
   LEFT JOIN stats_cache sc ON sc.repo_id = r.id
@@ -52,6 +59,19 @@ export function topByDownloads30d(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
       `${LEADER_SELECT} ORDER BY downloads_30d DESC, stars DESC LIMIT ?`,
+    )
+    .all(limit);
+}
+
+/**
+ * Top repos by cumulative downloads on their latest stable release —
+ * roughly "current install base". Preferred headline metric over the 30-day
+ * delta, which is more about velocity than popularity.
+ */
+export function topByLatestReleaseDownloads(db: Db, limit = 20): LeaderRow[] {
+  return db.raw
+    .prepare<[number], LeaderRow>(
+      `${LEADER_SELECT} ORDER BY latest_release_downloads DESC, stars DESC LIMIT ?`,
     )
     .all(limit);
 }
@@ -113,13 +133,14 @@ export function topByCategory(db: Db, kind: RepoKind, limit = 50, offset = 0): C
   return { rows, total };
 }
 
-export const SEARCH_SORTS = ['name', 'stars', 'downloads_30d', 'recent'] as const;
+export const SEARCH_SORTS = ['name', 'stars', 'downloads', 'trending', 'recent'] as const;
 export type SearchSort = (typeof SEARCH_SORTS)[number];
 
 export const SEARCH_SORT_LABELS: Record<SearchSort, string> = {
   name: 'Name (A-Z)',
   stars: 'Stars (high to low)',
-  downloads_30d: 'Downloads 30d (high to low)',
+  downloads: 'Downloads (latest release)',
+  trending: 'Trending (30d downloads delta)',
   recent: 'Recently active',
 };
 
@@ -130,7 +151,8 @@ const ORDER_BY_BY_SORT: Record<SearchSort, string> = {
   // SQLite treats "" as an identifier; the empty string literal is ''.
   name: "COALESCE(NULLIF(r.hacs_name, ''), r.full_name) COLLATE NOCASE ASC",
   stars: 'stars DESC, r.full_name COLLATE NOCASE ASC',
-  downloads_30d: 'downloads_30d DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
+  downloads: 'latest_release_downloads DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
+  trending: 'downloads_30d DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
   recent: 'latest.last_commit_at DESC, r.full_name COLLATE NOCASE ASC',
 };
 

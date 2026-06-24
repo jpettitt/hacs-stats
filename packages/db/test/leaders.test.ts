@@ -35,6 +35,8 @@ function seedStats(
     star_delta_7d?: number;
     star_delta_30d?: number;
     top_version_30d?: string | null;
+    latest_release_tag?: string | null;
+    latest_release_downloads?: number | null;
     date?: string;
   },
 ) {
@@ -54,6 +56,8 @@ function seedStats(
     total_downloads_30d: opts.downloads_30d ?? 0,
     star_delta_7d: opts.star_delta_7d ?? 0,
     star_delta_30d: opts.star_delta_30d ?? 0,
+    latest_release_tag: opts.latest_release_tag ?? null,
+    latest_release_downloads: opts.latest_release_downloads ?? null,
     updated_at: 'test',
   });
 }
@@ -290,14 +294,25 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'c/c', 'a/a']);
   });
 
-  it('sort=downloads_30d orders by total_downloads_30d DESC', () => {
+  it('sort=trending orders by total_downloads_30d (velocity) DESC', () => {
     const db = freshDb();
     const a = seedRepo(db, 'a', 'a');
     const b = seedRepo(db, 'b', 'b');
     seedStats(db, a, { stars: 1, downloads_30d: 10 });
     seedStats(db, b, { stars: 1, downloads_30d: 500 });
-    const hits = leaders.searchRepos(db, { q: '', sort: 'downloads_30d' }).rows;
+    const hits = leaders.searchRepos(db, { q: '', sort: 'trending' }).rows;
     expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'a/a']);
+  });
+
+  it('sort=downloads orders by latest_release_downloads DESC (new headline metric)', () => {
+    const db = freshDb();
+    const a = seedRepo(db, 'a', 'a');
+    const b = seedRepo(db, 'b', 'b');
+    seedStats(db, a, { stars: 1, latest_release_downloads: 100 });
+    seedStats(db, b, { stars: 1, latest_release_downloads: 9999 });
+    const hits = leaders.searchRepos(db, { q: '', sort: 'downloads' }).rows;
+    expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'a/a']);
+    expect(hits[0]?.latest_release_downloads).toBe(9999);
   });
 
   it('sort=recent orders by latest.last_commit_at DESC', () => {

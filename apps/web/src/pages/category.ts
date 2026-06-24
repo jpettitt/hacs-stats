@@ -29,7 +29,7 @@ export function renderCategoryPage(props: CategoryPageProps): string {
     <p class="muted small">${props.total} repos in this category, sorted by stars.</p>
     ${renderLeaderTable(props.rows, {
       valueLabel: 'Stars',
-      formatValue: (r) => fmtInt(r.stars),
+      formatValue: (r) => escapeHtml(fmtInt(r.stars)),
     })}
     ${renderPagination({
       page: props.page,

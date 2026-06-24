@@ -55,7 +55,7 @@ app.get('/', (c) => {
   const body = renderHome({
     repoCount: repos.countRepos(db),
     topByStars: leaders.topByStars(db, 15),
-    topByDownloads30d: leaders.topByDownloads30d(db, 15),
+    topByDownloads: leaders.topByLatestReleaseDownloads(db, 15),
     trendingByStars: leaders.trendingByStars(db, 15),
     newArrivals: leaders.newArrivals(db, 10),
     recentlyUpdated: leaders.recentlyUpdated(db, 10),
@@ -150,6 +150,8 @@ app.get('/r/:owner/:name', (c) => {
       star_delta_30d: detail.star_delta_30d,
       downloads_30d: detail.downloads_30d,
       top_version_30d: detail.top_version_30d,
+      latest_release_tag: detail.latest_release_tag,
+      latest_release_downloads: detail.latest_release_downloads,
     },
     starsSeries,
     releases: releaseRows,
@@ -233,7 +235,7 @@ app.get('/api/stats/overview', (c) =>
   c.json({
     repos: repos.countRepos(db),
     topByStars: leaders.topByStars(db, 20),
-    topByDownloads30d: leaders.topByDownloads30d(db, 20),
+    topByDownloads: leaders.topByLatestReleaseDownloads(db, 20),
   }),
 );
 

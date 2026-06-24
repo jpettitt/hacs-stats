@@ -18,6 +18,8 @@ export interface RepoDetailProps {
   star_delta_30d: number;
   downloads_30d: number;
   top_version_30d: string | null;
+  latest_release_tag: string | null;
+  latest_release_downloads: number;
 }
 
 export interface RepoDetailViewModel {
@@ -61,17 +63,22 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
   const statTile = (value: string, label: string) =>
     `<div class="stat-tile"><strong>${escapeHtml(value)}</strong><span class="muted small">${escapeHtml(label)}</span></div>`;
 
+  // Headline number: cumulative downloads of the LATEST non-prerelease
+  // release's HACS asset. Closer to "current install base" than a 30-day
+  // delta. We expose the 30d delta too, smaller, as a trend signal.
+  const downloadsLabel = detail.latest_release_tag
+    ? `downloads of ${detail.latest_release_tag}`
+    : 'downloads (latest release)';
   const statsGrid = `
     <div class="stat stats-row">
       ${statTile(fmtInt(detail.stars), 'stars')}
       ${statTile(fmtDelta(detail.star_delta_7d), 'stars Δ 7d')}
       ${statTile(fmtDelta(detail.star_delta_30d), 'stars Δ 30d')}
-      ${statTile(fmtInt(detail.downloads_30d), 'downloads 30d')}
+      ${statTile(fmtInt(detail.latest_release_downloads), downloadsLabel)}
+      ${statTile(fmtInt(detail.downloads_30d), 'downloads Δ 30d')}
     </div>`;
 
-  const topVersion = detail.top_version_30d
-    ? `<p>Top release in last 30 days: <code>${escapeHtml(detail.top_version_30d)}</code></p>`
-    : '';
+  const topVersion = '';
 
   const starsChart = renderLineChart(starsSeries, {
     ariaLabel: `Stars over time for ${detail.full_name}`,

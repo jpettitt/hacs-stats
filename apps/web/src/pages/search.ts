@@ -11,7 +11,8 @@ import { escapeHtml } from '../sanitize.js';
 export const SORT_OPTIONS = [
   { value: 'name', label: 'Name (A-Z)' },
   { value: 'stars', label: 'Stars (high to low)' },
-  { value: 'downloads_30d', label: 'Downloads 30d' },
+  { value: 'downloads', label: 'Downloads (latest release)' },
+  { value: 'trending', label: 'Trending (30d Δ)' },
   { value: 'recent', label: 'Recently active' },
 ] as const;
 
@@ -44,15 +45,18 @@ function dropdown(
 }
 
 function valueForSort(r: RowForList, sort: SortValue): string {
+  // formatValue returns trusted HTML; caller escapes anything user-derived.
   switch (sort) {
     case 'stars':
-      return fmtInt(r.stars);
-    case 'downloads_30d':
-      return fmtInt(r.downloads_30d);
+      return escapeHtml(fmtInt(r.stars));
+    case 'downloads':
+      return `${escapeHtml(fmtInt(r.latest_release_downloads ?? 0))}${r.latest_release_tag ? ` <span class="muted small">(${escapeHtml(r.latest_release_tag)})</span>` : ''}`;
+    case 'trending':
+      return escapeHtml(fmtInt(r.downloads_30d));
     case 'recent':
-      return r.last_commit_at ? r.last_commit_at.slice(0, 10) : '—';
+      return r.last_commit_at ? escapeHtml(r.last_commit_at.slice(0, 10)) : '—';
     default:
-      return fmtInt(r.stars);
+      return escapeHtml(fmtInt(r.stars));
   }
 }
 

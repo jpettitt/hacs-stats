@@ -6,7 +6,7 @@ export type LeaderRow = RowForList;
 export interface HomeProps {
   repoCount: number;
   topByStars: LeaderRow[];
-  topByDownloads30d: LeaderRow[];
+  topByDownloads: LeaderRow[];
   trendingByStars: LeaderRow[];
   newArrivals: LeaderRow[];
   recentlyUpdated: LeaderRow[];
@@ -24,14 +24,8 @@ function descCell(d: string | null | undefined, max = 90): string {
 }
 
 export function renderHome(props: HomeProps): string {
-  const {
-    repoCount,
-    topByStars,
-    topByDownloads30d,
-    trendingByStars,
-    newArrivals,
-    recentlyUpdated,
-  } = props;
+  const { repoCount, topByStars, topByDownloads, trendingByStars, newArrivals, recentlyUpdated } =
+    props;
 
   const trendingNote =
     trendingByStars.length === 0
@@ -47,20 +41,22 @@ export function renderHome(props: HomeProps): string {
       <h2>Top by stars</h2>
       ${renderLeaderTable(topByStars, {
         valueLabel: 'Stars',
-        formatValue: (r) => fmtInt(r.stars),
+        formatValue: (r) => escapeHtml(fmtInt(r.stars)),
         showStarDelta: false,
       })}
     </section>
 
     <section>
-      <h2>Top by 30-day downloads</h2>
+      <h2>Top by downloads</h2>
       <p class="lead small">
-        Sum of HACS-asset download deltas over the last 30 days. Until two
-        daily snapshots have accumulated, values here will be zero.
+        Cumulative downloads of the HACS-asset on each repo's latest stable
+        release — closest proxy we have for current install base. Prereleases
+        are excluded so a 0.0.0-rc upload doesn't displace the real number.
       </p>
-      ${renderLeaderTable(topByDownloads30d, {
-        valueLabel: '30d Δ downloads',
-        formatValue: (r) => fmtInt(r.downloads_30d),
+      ${renderLeaderTable(topByDownloads, {
+        valueLabel: 'Downloads',
+        formatValue: (r) =>
+          `${fmtInt(r.latest_release_downloads ?? 0)}${r.latest_release_tag ? ` <span class="muted small">(${escapeHtml(r.latest_release_tag)})</span>` : ''}`,
       })}
     </section>
 
@@ -69,7 +65,7 @@ export function renderHome(props: HomeProps): string {
       ${trendingNote}
       ${renderLeaderTable(trendingByStars, {
         valueLabel: 'Stars Δ 7d',
-        formatValue: (r) => `+${fmtInt(r.star_delta_30d)}`,
+        formatValue: (r) => escapeHtml(`+${fmtInt(r.star_delta_30d)}`),
         showStarDelta: false,
       })}
     </section>

@@ -121,6 +121,45 @@ export function computeStatsCache(
               THEN stars END) AS month_ago
           FROM repo_snapshots
           GROUP BY repo_id
+        ),
+        ranked_stable_releases AS (
+          -- The latest non-prerelease per repo, by publish date. Ties (multiple
+          -- releases at the exact same timestamp) broken by tag DESC so the
+          -- pick is stable across rollups.
+          SELECT
+            rel.repo_id,
+            rel.id AS release_id,
+            rel.tag,
+            ROW_NUMBER() OVER (
+              PARTITION BY rel.repo_id
+              ORDER BY rel.published_at DESC, rel.tag DESC
+            ) AS rn
+          FROM releases rel
+          WHERE rel.is_prerelease = 0
+        ),
+        latest_release_dl AS (
+          -- Per repo, the latest stable release's cumulative HACS-asset
+          -- download count from the most recent asset snapshot. NULL if the
+          -- snapshot's missing; 0 if it exists but the asset name doesn't
+          -- match the declared hacs_filename.
+          SELECT
+            lsr.repo_id,
+            lsr.tag,
+            SUM(
+              CASE
+                WHEN r.hacs_filename IS NOT NULL AND ras.asset_name != r.hacs_filename THEN 0
+                ELSE COALESCE(ras.download_count, 0)
+              END
+            ) AS downloads
+          FROM ranked_stable_releases lsr
+          JOIN repos r ON r.id = lsr.repo_id
+          LEFT JOIN release_asset_snapshots ras
+            ON ras.release_id = lsr.release_id
+            AND ras.snapshot_date = (
+              SELECT MAX(snapshot_date) FROM release_asset_snapshots
+            )
+          WHERE lsr.rn = 1
+          GROUP BY lsr.repo_id, lsr.tag
         )
         INSERT INTO stats_cache (
           repo_id,
@@ -129,6 +168,8 @@ export function computeStatsCache(
           total_downloads_30d,
           star_delta_7d,
           star_delta_30d,
+          latest_release_tag,
+          latest_release_downloads,
           updated_at
         )
         SELECT
@@ -138,6 +179,8 @@ export function computeStatsCache(
           COALESCE(prd.total_downloads_30d, 0),
           COALESCE(sd.today - sd.week_ago, 0),
           COALESCE(sd.today - sd.month_ago, 0),
+          lrd.tag,
+          lrd.downloads,
           @nowIso
         FROM repos r
         LEFT JOIN ranked_releases rr
@@ -146,6 +189,8 @@ export function computeStatsCache(
           ON prd.repo_id = r.id
         LEFT JOIN star_deltas sd
           ON sd.repo_id = r.id
+        LEFT JOIN latest_release_dl lrd
+          ON lrd.repo_id = r.id
       `)
       .run({ asOfDate, nowIso });
   });

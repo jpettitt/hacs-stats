@@ -30,5 +30,9 @@ export interface StatsCacheRow {
   total_downloads_30d: number | null;
   star_delta_7d: number | null;
   star_delta_30d: number | null;
+  /** Latest non-prerelease tag. Null when the repo has only prereleases / no releases. */
+  latest_release_tag: string | null;
+  /** Cumulative download count of the HACS asset on the latest non-pre release. */
+  latest_release_downloads: number | null;
   updated_at: string;
 }

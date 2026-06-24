@@ -131,6 +131,62 @@ describe('computeStatsCache — downloads', () => {
   });
 });
 
+describe('computeStatsCache — latest stable release downloads', () => {
+  it('picks the newest non-prerelease and uses the latest snapshot count', () => {
+    const db = freshDb();
+    const r = seedRepo(db, 'a', 'b', 'card.js');
+    const v1 = seedRelease(db, r, 'v1');
+    const v2 = seedRelease(db, r, 'v2');
+    // v3 is a prerelease — must NOT win
+    releases.upsertRelease(db, {
+      repoId: r,
+      tag: 'v3-pre',
+      publishedAt: '2026-06-21T00:00:00Z',
+      isPrerelease: true,
+      htmlUrl: '',
+    });
+    // v2 is newer than v1 by published_at — should win the "latest" race
+    db.raw
+      .prepare('UPDATE releases SET published_at = ? WHERE id = ?')
+      .run('2026-06-19T00:00:00Z', v1);
+    db.raw
+      .prepare('UPDATE releases SET published_at = ? WHERE id = ?')
+      .run('2026-06-20T00:00:00Z', v2);
+    seedAssetSnapshot(db, v1, 'card.js', '2026-06-21', 100);
+    seedAssetSnapshot(db, v2, 'card.js', '2026-06-21', 850);
+    computeStatsCache(db, { asOfDate: '2026-06-21', nowIso: 'test' });
+    const row = statsCache.getStatsCacheRow(db, r);
+    expect(row?.latest_release_tag).toBe('v2');
+    expect(row?.latest_release_downloads).toBe(850);
+  });
+
+  it('honours hacs_filename — only the matching asset counts', () => {
+    const db = freshDb();
+    const r = seedRepo(db, 'a', 'b', 'card.js');
+    const v1 = seedRelease(db, r, 'v1');
+    seedAssetSnapshot(db, v1, 'card.js', '2026-06-21', 1500);
+    seedAssetSnapshot(db, v1, 'source.zip', '2026-06-21', 9999); // must be ignored
+    computeStatsCache(db, { asOfDate: '2026-06-21', nowIso: 'test' });
+    expect(statsCache.getStatsCacheRow(db, r)?.latest_release_downloads).toBe(1500);
+  });
+
+  it('returns null tag for a repo with only prereleases', () => {
+    const db = freshDb();
+    const r = seedRepo(db, 'a', 'b', 'card.js');
+    releases.upsertRelease(db, {
+      repoId: r,
+      tag: 'v0.1.0-rc',
+      publishedAt: '2026-06-20T00:00:00Z',
+      isPrerelease: true,
+      htmlUrl: '',
+    });
+    computeStatsCache(db, { asOfDate: '2026-06-21', nowIso: 'test' });
+    const row = statsCache.getStatsCacheRow(db, r);
+    expect(row?.latest_release_tag).toBeNull();
+    expect(row?.latest_release_downloads).toBeNull();
+  });
+});
+
 describe('computeStatsCache — stars', () => {
   it('produces correct 7d and 30d deltas independently', () => {
     const db = freshDb();
