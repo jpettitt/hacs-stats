@@ -40,6 +40,20 @@ Two sources:
    by URL. Discovered via a weekly GitHub code-search for `hacs.json` (the
    manifest file every HACS repo must include), plus user submissions.
 
+Discovered candidates flow through a queue at `/admin/queue`. High-confidence
+candidates auto-approve: ≥50 stars *and* pushed within the last 6 months go
+straight into the catalogue. Owners that already have a `default`-listed repo
+get a lower 5-star bar (trusted-owner discount). Everything else queues for
+manual review. Run `pnpm discover` for a single sweep, or
+`pnpm discover:bands` to walk 15 file-size bands and break past the GitHub
+code-search 1000-result cap.
+
+Catalogued repos move through a lifecycle: `pending` (just added, no scrape
+yet) → `active` (default) → `offline` (failing GraphQL) → `removed` (30+ days
+offline). GitHub repo renames are picked up via the canonical `nameWithOwner`
+field and the row is renamed in place (or deduped against an existing
+canonical row).
+
 ## Stack
 
 A single-VPS Node app behind Cloudflare-as-CDN.

@@ -20,7 +20,8 @@
     "dev:scraper": "pnpm --filter @hacs-stats/scraper dev",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
-    "discover": "tsx --env-file-if-exists=.env scripts/discover.ts"
+    "discover": "tsx --env-file-if-exists=.env scripts/discover.ts",
+    "discover:bands": "tsx --env-file-if-exists=.env scripts/discover-bands.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

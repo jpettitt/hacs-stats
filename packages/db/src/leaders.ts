@@ -146,6 +146,21 @@ export function recentlyUpdated(db: Db, limit = 20): LeaderRow[] {
  * admin (and submitters) can see what's queued. Most useful right after a
  * batch of accepts via /admin/queue.
  */
+/**
+ * Every repo (any state) belonging to a single GitHub owner — powers the
+ * /owner/:owner page so visitors can see an author's full HACS portfolio at
+ * once. Includes pending/offline/removed too: showing only 'active' would
+ * hide newly-auto-approved repos that haven't been scraped yet, which is
+ * the opposite of what a portfolio page should do.
+ */
+export function reposByOwner(db: Db, owner: string, limit = 200): LeaderRow[] {
+  return db.raw
+    .prepare<[string, number], LeaderRow>(
+      `${LEADER_SELECT} WHERE r.owner = ? ORDER BY stars DESC, r.full_name LIMIT ?`,
+    )
+    .all(owner, limit);
+}
+
 export function pendingRepos(db: Db, limit = 200): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(

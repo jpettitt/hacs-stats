@@ -43,6 +43,10 @@ export interface RepoDetailViewModel {
     html_url: string;
     downloads: number;
   }>;
+  /** Other repos in the catalogue owned by the same GitHub owner. Empty
+   * when this is the only one (the page renders a sibling-count line, no
+   * full section). */
+  relatedRepos: Array<{ full_name: string; hacs_name: string | null; kind: string }>;
 }
 
 function fmtDate(iso: string | null): string {
@@ -51,7 +55,8 @@ function fmtDate(iso: string | null): string {
 }
 
 export function renderRepoDetail(vm: RepoDetailViewModel): string {
-  const { detail, starsSeries, releases } = vm;
+  const { detail, starsSeries, releases, relatedRepos } = vm;
+  const owner = detail.full_name.split('/')[0] ?? '';
   const ghUrl = safeGithubRepoUrl(detail.full_name);
 
   // Title: prefer the hacs.json name (escaped); always show owner/repo as a
@@ -223,5 +228,45 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
     <section>
       <h2>Recent releases</h2>
       ${releasesTable}
+    </section>
+    ${renderRelatedSection(owner, relatedRepos)}`;
+}
+
+/**
+ * Lists other repos by the same owner so visitors can browse a prolific
+ * author's catalogue (e.g. PiotrMachowski, thomasloven). Shown unconditionally
+ * — even when empty — because the "only one we've seen from this owner" state
+ * is itself useful signal. Links to /owner/<name> for the full owner page.
+ */
+function renderRelatedSection(
+  owner: string,
+  related: Array<{ full_name: string; hacs_name: string | null; kind: string }>,
+): string {
+  if (!owner) return '';
+  const safeOwner = escapeHtml(owner);
+  if (related.length === 0) {
+    return `
+      <section>
+        <h2>Other repos from <a href="/owner/${safeOwner}">${safeOwner}</a></h2>
+        <p class="muted">This is the only repo we've catalogued from this owner.</p>
+      </section>`;
+  }
+  const items = related
+    .slice(0, 20)
+    .map((r) => {
+      const safe = escapeHtml(r.full_name);
+      const label = r.hacs_name ? escapeHtml(r.hacs_name) : safe;
+      return `<li><a href="/r/${safe}">${label}</a> <span class="muted small">${escapeHtml(r.kind)}</span></li>`;
+    })
+    .join('');
+  const more =
+    related.length > 20
+      ? `<p class="muted small">… and ${related.length - 20} more — see <a href="/owner/${safeOwner}">/owner/${safeOwner}</a>.</p>`
+      : '';
+  return `
+    <section>
+      <h2>Other repos from <a href="/owner/${safeOwner}">${safeOwner}</a> (${related.length})</h2>
+      <ul class="related-list">${items}</ul>
+      ${more}
     </section>`;
 }

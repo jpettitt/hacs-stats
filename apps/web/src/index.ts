@@ -9,6 +9,7 @@ import { renderAdminPage } from './pages/admin.js';
 import { renderCategoriesIndex, renderCategoryPage } from './pages/category.js';
 import { renderHome } from './pages/home.js';
 import { renderPendingPage, renderRemovedPage } from './pages/lifecycle.js';
+import { renderOwnerPage } from './pages/owner.js';
 import { renderRepoDetail } from './pages/repo.js';
 import { renderSearchPage } from './pages/search.js';
 import { renderSubmitPage } from './pages/submit.js';
@@ -114,6 +115,30 @@ app.get('/category/:kind', (c) => {
   return c.html(renderLayout({ title: `${kind} — hacs-stats`, navActive: 'categories', body }));
 });
 
+app.get('/owner/:owner', (c) => {
+  const owner = c.req.param('owner');
+  // Same allow-list as repo names: GitHub usernames/orgs are alnum + - / _
+  // / dot. We're stricter than GitHub's actual rules (which permit unicode)
+  // because the URL space is ours to constrain — any owner we'd catalogue
+  // must have a valid GitHub handle anyway.
+  if (!/^[A-Za-z0-9._-]{1,39}$/.test(owner)) {
+    return c.html(
+      renderLayout({
+        title: 'Invalid owner — hacs-stats',
+        body: `<p>That doesn't look like a valid GitHub owner.</p>`,
+      }),
+      400,
+    );
+  }
+  const ownerRepos = leaders.reposByOwner(db, owner, 200);
+  return c.html(
+    renderLayout({
+      title: `${owner} — hacs-stats`,
+      body: renderOwnerPage({ owner, repos: ownerRepos }),
+    }),
+  );
+});
+
 app.get('/r/:owner/:name', (c) => {
   // Hono decodes path params for us. We still revalidate via the same allow-list
   // used in `repoLink` — anything that wouldn't render as a link shouldn't load
@@ -144,6 +169,7 @@ app.get('/r/:owner/:name', (c) => {
     .repoStarsTimeseries(db, detail.id, 30)
     .map((p) => ({ date: p.date, value: p.stars }));
   const releaseRows = leaders.releaseDownloadsForRepo(db, detail.id, 25);
+  const relatedRepos = repos.listRepoIdentsByOwner(db, owner, fullName);
   const body = renderRepoDetail({
     detail: {
       full_name: detail.full_name,
@@ -174,6 +200,7 @@ app.get('/r/:owner/:name', (c) => {
     },
     starsSeries,
     releases: releaseRows,
+    relatedRepos,
   });
   const title = detail.hacs_name
     ? `${detail.hacs_name} (${fullName}) — hacs-stats`
@@ -376,7 +403,19 @@ app.get('/admin/queue', (c) => {
     if (gate.status === 503) return c.text('admin endpoint not configured', 503);
     return adminChallenge();
   }
-  const pending = discoveryQueue.listQueueByStatus(db, 'pending', 200);
+  // Status filter — defaults to 'pending' so the admin's daily workflow
+  // hasn't changed; explicit ?status=accepted/rejected/error surface the
+  // audit trail (e.g. which rows did the band-discovery run auto-approve).
+  const rawStatus = c.req.query('status') ?? 'pending';
+  const status: 'pending' | 'accepted' | 'rejected' | 'error' =
+    rawStatus === 'accepted' || rawStatus === 'rejected' || rawStatus === 'error'
+      ? rawStatus
+      : 'pending';
+  const rawSort = c.req.query('sort') ?? 'discovered';
+  const sort: 'discovered' | 'stars' | 'pushed' =
+    rawSort === 'stars' || rawSort === 'pushed' ? rawSort : 'discovered';
+  const dir: 'asc' | 'desc' = c.req.query('dir') === 'asc' ? 'asc' : 'desc';
+  const pending = discoveryQueue.listQueueByStatus(db, status, 200, sort, dir);
   const totals = discoveryQueue.countQueueByStatus(db);
   const msg = c.req.query('msg');
   // Enrich each queue item with "related projects" — other repos in our
@@ -392,13 +431,31 @@ app.get('/admin/queue', (c) => {
       related: owner ? repos.listRepoIdentsByOwner(db, owner, fullName) : [],
     };
   });
+  // Accepted tab uses the shared listing format. Look up each accepted
+  // queue row in `repos` (auto-approve inserted them; manual accepts also
+  // upsert) and pass to the listing component. Newly-added rows that
+  // haven't been scraped yet will show 0 stars / 0 downloads — that's
+  // accurate ("we have no data yet"), not a bug.
+  const listingRows =
+    status === 'accepted'
+      ? pending
+          .map((it) => {
+            const fullName = it.url.replace(/^.*github\.com\//, '');
+            return leaders.repoDetailByFullName(db, fullName);
+          })
+          .filter((r): r is NonNullable<typeof r> => r !== undefined)
+      : undefined;
   return c.html(
     renderLayout({
       title: 'Admin · queue — hacs-stats',
       body: renderAdminPage({
         pending: enriched,
         totals,
+        status,
+        sort,
+        dir,
         ...(msg !== undefined ? { flash: msg } : {}),
+        ...(listingRows ? { listingRows } : {}),
       }),
     }),
   );

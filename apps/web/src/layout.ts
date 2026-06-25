@@ -247,6 +247,41 @@ section > h2 { margin-bottom: .75rem; }
 .related a { color: var(--accent); text-decoration: none; }
 .related a:hover { text-decoration: underline; }
 
+/* ---------- repo detail: 'other repos from this owner' ------------- */
+.related-list {
+  margin: .5rem 0; padding-left: 1.25rem; columns: 2; column-gap: 2rem;
+}
+.related-list li { break-inside: avoid; margin-bottom: .15rem; }
+
+/* ---------- admin queue: status tabs ------------------------------- */
+.tabs {
+  display: flex; gap: .25rem; margin: 0.75rem 0 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  padding: .45rem .85rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: .35rem .35rem 0 0;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 500;
+}
+.tab:hover { color: var(--text); }
+.tab-active {
+  background: var(--bg-elev);
+  border-color: var(--border);
+  color: var(--text);
+  /* visually merge with the table below */
+  margin-bottom: -1px;
+  border-bottom: 1px solid var(--bg-elev);
+}
+
+/* ---------- sortable column headers (admin queue) ------------------ */
+th.sort-active { color: var(--accent); }
+th a { color: inherit; text-decoration: none; }
+th a:hover { text-decoration: underline; }
+
 /* ---------- lifecycle banners (pending / offline / removed) --------- */
 .banner {
   margin: 1.25rem 0; padding: .85rem 1.1rem;

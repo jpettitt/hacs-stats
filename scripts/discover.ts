@@ -2,18 +2,49 @@
 /**
  * `pnpm discover` — manual + (eventually) cron-fired wrapper for the
  * GitHub-code-search discovery worker. Reads existing repo full_names to
- * skip, runs the search, inserts new candidates into discovery_queue.
+ * skip, runs the search, splits results:
  *
- * Designed to be fired weekly on the VPS via systemd timer. Sequence:
- *   discover → land in queue → admin reviews at /admin/queue → accept →
- *   daily scrape picks up the new row → metadata/snapshots/etc.
+ *   - autoApprove candidates (stars > N + pushed within last M months) →
+ *     inserted directly into `repos` with state='pending' (and a queue
+ *     row with status='accepted' as an audit trail). Next scrape fills
+ *     in their metadata as usual.
+ *
+ *   - everyone else → discovery_queue with status='pending' for manual
+ *     review at /admin/queue.
+ *
+ * Env knobs (all optional):
+ *   DISCOVERY_QUERY                Override the search query. Defaults to
+ *                                  `filename:hacs.json`. Use size bands
+ *                                  to break past GitHub's 1000-result cap:
+ *                                  DISCOVERY_QUERY='filename:hacs.json size:80..90'
+ *   DISCOVERY_MAX_PAGES            Max pages of search results (default 10
+ *                                  = 1000 results per run).
+ *   AUTOAPPROVE_MIN_STARS          Stars threshold (default 50).
+ *   AUTOAPPROVE_KNOWN_OWNER_MIN_STARS
+ *                                  Lower stars threshold when the
+ *                                  candidate's owner already has a repo
+ *                                  in the main HACS list (source='default').
+ *                                  Trusted-owner discount — an unknown
+ *                                  card from an established author beats
+ *                                  an unknown card from an unknown author.
+ *                                  Default 5.
+ *   AUTOAPPROVE_MAX_AGE_MONTHS     Recency threshold against pushed_at
+ *                                  (default 6).
+ *   AUTOAPPROVE_OFF=1              Disable auto-approve, queue everything.
  */
-import { openDb, resolveDatabasePath, runMigrations } from '@hacs-stats/db';
+import { discoveryQueue, openDb, repos, resolveDatabasePath, runMigrations } from '@hacs-stats/db';
 import { discoverCustomRepos } from '../apps/scraper/src/discovery.js';
 
 const DATABASE_PATH = resolveDatabasePath();
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const MAX_PAGES = Number(process.env.DISCOVERY_MAX_PAGES ?? 10);
+const QUERY = process.env.DISCOVERY_QUERY ?? 'filename:hacs.json';
+const AUTOAPPROVE_OFF = process.env.AUTOAPPROVE_OFF === '1';
+const AUTOAPPROVE_MIN_STARS = Number(process.env.AUTOAPPROVE_MIN_STARS ?? 50);
+const AUTOAPPROVE_KNOWN_OWNER_MIN_STARS = Number(
+  process.env.AUTOAPPROVE_KNOWN_OWNER_MIN_STARS ?? 5,
+);
+const AUTOAPPROVE_MAX_AGE_MONTHS = Number(process.env.AUTOAPPROVE_MAX_AGE_MONTHS ?? 6);
 
 if (!GITHUB_TOKEN) {
   console.error('[discover] GITHUB_TOKEN required');
@@ -24,33 +55,61 @@ async function main(): Promise<void> {
   const db = openDb({ path: DATABASE_PATH });
   runMigrations(db);
 
-  // Build the "already known" set: everything currently in `repos` plus
-  // anything already sitting in `discovery_queue` from a prior run.
+  // Build "already known" set: every repo in `repos` + anything already in
+  // discovery_queue (any source) so we don't re-queue the same URL.
   const known = new Set<string>();
   for (const r of db.raw.prepare<[], { full_name: string }>('SELECT full_name FROM repos').all()) {
     known.add(r.full_name);
   }
-  const queueRows = db.raw
-    .prepare<[], { url: string }>("SELECT url FROM discovery_queue WHERE source = 'code_search'")
-    .all();
-  // queue URLs are stored as full GitHub URLs; extract owner/repo for the dedupe.
+  const queueRows = db.raw.prepare<[], { url: string }>('SELECT url FROM discovery_queue').all();
   for (const row of queueRows) {
     const m = /github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)$/.exec(row.url);
     if (m?.[1]) known.add(m[1]);
   }
 
+  // Trusted-owner set: every owner that already has at least one repo from
+  // the canonical HACS lists (source='default'). Used by auto-approve to
+  // lower the stars bar for candidates from established authors.
+  const knownOwners = new Set<string>();
+  for (const r of db.raw
+    .prepare<[], { owner: string }>("SELECT DISTINCT owner FROM repos WHERE source = 'default'")
+    .all()) {
+    knownOwners.add(r.owner.toLowerCase());
+  }
+
+  console.log(`[discover] query: ${QUERY}`);
   console.log(`[discover] starting — ${known.size} already-known repos to skip`);
+  console.log(
+    `[discover] autoApprove: ${
+      AUTOAPPROVE_OFF
+        ? 'OFF'
+        : `stars >= ${AUTOAPPROVE_MIN_STARS} (or >= ${AUTOAPPROVE_KNOWN_OWNER_MIN_STARS} for the ${knownOwners.size} trusted owners) AND pushed within last ${AUTOAPPROVE_MAX_AGE_MONTHS} months`
+    }`,
+  );
   console.log(`[discover] DB: ${DATABASE_PATH}`);
 
   const result = await discoverCustomRepos({
     token: GITHUB_TOKEN,
     maxPages: MAX_PAGES,
+    query: QUERY,
     alreadyKnown: known,
+    ...(AUTOAPPROVE_OFF
+      ? {}
+      : {
+          autoApprove: {
+            minStars: AUTOAPPROVE_MIN_STARS,
+            maxAgeMonths: AUTOAPPROVE_MAX_AGE_MONTHS,
+            knownOwnerMinStars: AUTOAPPROVE_KNOWN_OWNER_MIN_STARS,
+            knownOwners,
+          },
+        }),
   });
 
   console.log('[discover] summary:', {
     inspected: result.inspected,
     candidates: result.candidates.length,
+    auto_approved: result.autoApproved,
+    queued_for_review: result.candidates.length - result.autoApproved,
     rejected_non_root: result.rejectedNonRoot,
     rejected_fork: result.rejectedFork,
     rejected_no_manifest: result.rejectedNoManifest,
@@ -59,26 +118,68 @@ async function main(): Promise<void> {
   });
 
   if (result.candidates.length === 0) {
-    console.log('[discover] nothing new to queue');
+    console.log('[discover] nothing new');
     db.close();
     process.exit(0);
   }
 
-  const insertQueue = db.raw.prepare(
-    `INSERT INTO discovery_queue (url, source, discovered_at, status)
-   VALUES (?, 'code_search', ?, 'pending')
-   ON CONFLICT(url) DO NOTHING`,
+  // Split + write in one transaction. Auto-approved entries hit BOTH the
+  // repos table (so the next scrape picks them up) AND discovery_queue
+  // (status='accepted') as an audit trail — admins can see what was
+  // auto-approved alongside what they manually decided.
+  const insertQueuePending = db.raw.prepare(
+    `INSERT INTO discovery_queue (url, source, discovered_at, status, notes, stars, pushed_at, description)
+     VALUES (?, 'code_search', ?, 'pending', ?, ?, ?, ?)
+     ON CONFLICT(url) DO NOTHING`,
   );
-  const insertAll = db.raw.transaction((items: typeof result.candidates) => {
-    for (const c of items) {
-      insertQueue.run(c.htmlUrl, new Date().toISOString());
+  const insertQueueAccepted = db.raw.prepare(
+    `INSERT INTO discovery_queue (url, source, discovered_at, status, notes, stars, pushed_at, description)
+     VALUES (?, 'code_search', ?, 'accepted', ?, ?, ?, ?)
+     ON CONFLICT(url) DO NOTHING`,
+  );
+
+  let autoApprovedCount = 0;
+  let queuedCount = 0;
+  const tx = db.raw.transaction(() => {
+    const nowIso = new Date().toISOString();
+    for (const c of result.candidates) {
+      if (c.autoApprove) {
+        repos.upsertRepo(db, {
+          owner: c.owner,
+          name: c.name,
+          kind: c.kind,
+          source: 'discovered',
+        });
+        insertQueueAccepted.run(
+          c.htmlUrl,
+          nowIso,
+          `kind=${c.kind}; auto-approved (stars=${c.stars ?? '?'}, pushed=${(c.pushedAt ?? '').slice(0, 10)})`,
+          c.stars ?? null,
+          c.pushedAt ?? null,
+          c.description ?? null,
+        );
+        autoApprovedCount++;
+      } else {
+        insertQueuePending.run(
+          c.htmlUrl,
+          nowIso,
+          `kind=${c.kind}`,
+          c.stars ?? null,
+          c.pushedAt ?? null,
+          c.description ?? null,
+        );
+        queuedCount++;
+      }
     }
   });
-  insertAll(result.candidates);
+  tx();
 
-  console.log(`[discover] queued ${result.candidates.length} new candidates → /admin/queue`);
-  // Print the first 5 so the user can sanity-check the worker.
-  for (const c of result.candidates.slice(0, 5)) console.log(`   • ${c.fullName}`);
+  console.log(
+    `[discover] ${autoApprovedCount} auto-approved into repos, ${queuedCount} queued → /admin/queue`,
+  );
+  for (const c of result.candidates.slice(0, 5)) {
+    console.log(`   • ${c.autoApprove ? 'AUTO' : 'queue'}  ${c.fullName}  (${c.kind})`);
+  }
   if (result.candidates.length > 5) console.log(`   … and ${result.candidates.length - 5} more`);
 
   db.close();
