@@ -21,7 +21,8 @@
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
     "discover": "tsx --env-file-if-exists=.env scripts/discover.ts",
-    "discover:bands": "tsx --env-file-if-exists=.env scripts/discover-bands.ts"
+    "discover:bands": "tsx --env-file-if-exists=.env scripts/discover-bands.ts",
+    "backfill:queue": "tsx --env-file-if-exists=.env scripts/backfill-queue.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
