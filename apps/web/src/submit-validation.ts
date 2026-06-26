@@ -7,6 +7,11 @@
 const USER_AGENT = 'hacs-stats/0.0.0 (+https://hacs-stats.dev)';
 const SAFE_PART = /^[A-Za-z0-9._-]+$/;
 
+/** Mirrors SUPPRESSED_FULLNAMES in apps/scraper/src/discovery.ts —
+ * platform repos (hacs/integration etc) we explicitly don't want in the
+ * catalogue. Kept in sync by hand; both are short lists. */
+const SUPPRESSED_FULLNAMES = new Set<string>(['hacs/integration']);
+
 const HACS_MEANINGFUL_FIELDS = new Set([
   'name',
   'filename',
@@ -43,6 +48,7 @@ export type SubmissionFailure =
   | 'no-hacs-json'
   | 'malformed-hacs-json'
   | 'not-meaningful'
+  | 'suppressed'
   // Forks are allowed via submission (the submitter is vouching for it as
   // the real canonical), but if the submitted repo is a fork we still
   // record it so the admin sees the lineage.
@@ -65,6 +71,9 @@ export async function validateSubmission(
   opts: ValidateSubmissionOptions = {},
 ): Promise<SubmissionResult> {
   if (!isWellFormedRepoFullName(fullName)) return { ok: false, failure: 'invalid-name' };
+  if (SUPPRESSED_FULLNAMES.has(fullName.toLowerCase())) {
+    return { ok: false, failure: 'suppressed' };
+  }
 
   const fetchImpl = opts.fetchImpl ?? fetch;
   const headers: Record<string, string> = {

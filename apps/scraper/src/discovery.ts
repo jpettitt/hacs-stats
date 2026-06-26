@@ -20,6 +20,17 @@ import { type FetchTextOptions, fetchJson } from './http.js';
 const SEARCH_URL = 'https://api.github.com/search/code';
 const USER_AGENT = 'hacs-stats/0.0.0 (+https://hacs-stats.dev)';
 
+/**
+ * Hard-coded deny-list for platform / meta repos. These ARE valid HACS-
+ * manifest-bearing repos but they're not "HACS modules" in the
+ * user-installable sense — hacs/integration is HACS itself. They're also
+ * marked suppressed=1 in the `repos` table (see migration 0010) so any
+ * existing row is hidden from listings; this set prevents re-discovery
+ * from re-adding them next sweep. Match is on lowercased full_name so
+ * casing differences don't slip through.
+ */
+const SUPPRESSED_FULLNAMES = new Set<string>(['hacs/integration']);
+
 const HACS_MEANINGFUL_FIELDS = new Set([
   'name',
   'filename',
@@ -273,6 +284,12 @@ export async function discoverCustomRepos(opts: DiscoveryOptions): Promise<Disco
         continue;
       }
       const fullName = item.repository.full_name;
+      if (SUPPRESSED_FULLNAMES.has(fullName.toLowerCase())) {
+        // Treat as already-known so the summary counter is honest about
+        // what we filtered out (vs lumping into a different reject bucket).
+        result.alreadyKnown++;
+        continue;
+      }
       if (alreadyKnown.has(fullName) || seen.has(fullName)) {
         if (alreadyKnown.has(fullName)) result.alreadyKnown++;
         continue;

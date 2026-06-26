@@ -69,9 +69,12 @@ const LEADER_SELECT = `
   ) latest ON latest.repo_id = r.id
 `;
 
-// All default leaderboard queries filter to state='active' — pending /
-// offline / removed repos have their own pages.
-const ACTIVE_ONLY = "r.state = 'active'";
+// All default leaderboard queries filter to state='active' and
+// suppressed=0. Suppressed rows are platform / meta repos that aren't
+// HACS modules in the user-installable sense (e.g. hacs/integration
+// itself) — kept in the catalogue so re-discovery doesn't re-add them,
+// but hidden from every public surface.
+const ACTIVE_ONLY = "r.state = 'active' AND r.suppressed = 0";
 
 export function topByStars(db: Db, limit = 20): LeaderRow[] {
   return db.raw
@@ -156,7 +159,7 @@ export function recentlyUpdated(db: Db, limit = 20): LeaderRow[] {
 export function reposByOwner(db: Db, owner: string, limit = 200): LeaderRow[] {
   return db.raw
     .prepare<[string, number], LeaderRow>(
-      `${LEADER_SELECT} WHERE r.owner = ? ORDER BY stars DESC, r.full_name LIMIT ?`,
+      `${LEADER_SELECT} WHERE r.owner = ? AND r.suppressed = 0 ORDER BY stars DESC, r.full_name LIMIT ?`,
     )
     .all(owner, limit);
 }
@@ -189,12 +192,14 @@ export interface CategoryPage {
 export function topByCategory(db: Db, kind: RepoKind, limit = 50, offset = 0): CategoryPage {
   const rows = db.raw
     .prepare<[RepoKind, number, number], LeaderRow>(
-      `${LEADER_SELECT} WHERE r.kind = ? ORDER BY stars DESC LIMIT ? OFFSET ?`,
+      `${LEADER_SELECT} WHERE r.kind = ? AND r.suppressed = 0 ORDER BY stars DESC LIMIT ? OFFSET ?`,
     )
     .all(kind, limit, offset);
   const total =
     db.raw
-      .prepare<[RepoKind], { n: number }>('SELECT COUNT(*) AS n FROM repos WHERE kind = ?')
+      .prepare<[RepoKind], { n: number }>(
+        'SELECT COUNT(*) AS n FROM repos WHERE kind = ? AND suppressed = 0',
+      )
       .get(kind)?.n ?? 0;
   return { rows, total };
 }
@@ -260,7 +265,9 @@ export function searchRepos(db: Db, opts: SearchOptions): SearchResult {
   const hasQ = opts.q.length > 0;
   const orderBy = ORDER_BY_BY_SORT[sort];
 
-  const wheres: string[] = [];
+  // Always exclude suppressed rows from search — keeps platform/meta repos
+  // (hacs/integration etc) from polluting results.
+  const wheres: string[] = ['r.suppressed = 0'];
   const params: unknown[] = [];
   if (hasQ) {
     wheres.push(

@@ -316,6 +316,7 @@ const FAILURE_TEXT: Record<string, string> = {
   'malformed-hacs-json': 'Found a hacs.json, but it wouldn’t parse.',
   'not-meaningful':
     'The hacs.json is missing every HACS-meaningful field. Likely a false positive.',
+  suppressed: "That's a HACS platform repo, not a HACS module — we don't list it.",
   'network-error': 'Couldn’t reach GitHub right now. Try again in a minute.',
 };
 
