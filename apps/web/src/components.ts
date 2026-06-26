@@ -107,11 +107,19 @@ export function kindBadge(kind: string): string {
  * fork or archived. Returns "" for the common case (HACS-default, not a
  * fork, not archived) so listings don't get cluttered.
  */
+/** Time in ms used for the "unmaintained" badge cutoff. Repos older than
+ * STALE_AFTER_MS are filtered from listings entirely (see leaders.ts);
+ * repos older than UNMAINTAINED_AFTER_MS but younger than STALE_AFTER_MS
+ * get a warning badge. Both thresholds intentionally live in code rather
+ * than config — they're product judgment, not knobs. */
+const UNMAINTAINED_AFTER_MS = 365 * 24 * 60 * 60 * 1000;
+
 export function repoTags(row: {
   source?: string;
   is_fork?: number;
   archived?: number;
   last_scraped_at?: string | null;
+  last_commit_at?: string | null;
 }): string {
   const tags: string[] = [];
   // Pending tag comes first so it's the most prominent — it's the most
@@ -190,6 +198,23 @@ export function repoTags(row: {
         'Marked archived on GitHub — read-only; no longer maintained.',
       ),
     );
+  // Unmaintained: last default-branch commit between 1 year and the
+  // stale-3y cutoff (the 3y cutoff hides the row entirely upstream — we
+  // never see those here). Heads-up for users so they don't install
+  // something the author has clearly walked away from.
+  if (row.last_commit_at) {
+    const t = Date.parse(row.last_commit_at);
+    if (Number.isFinite(t) && Date.now() - t > UNMAINTAINED_AFTER_MS) {
+      const ageYears = (Date.now() - t) / (365 * 24 * 60 * 60 * 1000);
+      tags.push(
+        tip(
+          'tag-unmaintained',
+          'unmaintained',
+          `No commits on the default branch in ${ageYears.toFixed(1)} years. Still listed (we hide repos with no activity in 3+ years entirely), but consider whether the author is around to fix bugs.`,
+        ),
+      );
+    }
+  }
   return tags.length ? ` ${tags.join(' ')}` : '';
 }
 

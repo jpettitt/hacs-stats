@@ -307,6 +307,8 @@ const FAILURE_TEXT: Record<string, string> = {
   'not-meaningful':
     'The hacs.json is missing every HACS-meaningful field. Likely a false positive.',
   suppressed: "That's a HACS platform repo, not a HACS module — we don't list it.",
+  stale:
+    "That repo hasn't had a push in 3+ years. We hide repos that abandoned to keep the catalogue useful.",
   'network-error': 'Couldn’t reach GitHub right now. Try again in a minute.',
 };
 

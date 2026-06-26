@@ -22,7 +22,8 @@
     "seed": "tsx scripts/seed.ts",
     "discover": "tsx --env-file-if-exists=.env scripts/discover.ts",
     "discover:bands": "tsx --env-file-if-exists=.env scripts/discover-bands.ts",
-    "backfill:queue": "tsx --env-file-if-exists=.env scripts/backfill-queue.ts"
+    "backfill:queue": "tsx --env-file-if-exists=.env scripts/backfill-queue.ts",
+    "sweep:queue": "tsx --env-file-if-exists=.env scripts/sweep-queue.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

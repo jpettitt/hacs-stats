@@ -74,7 +74,17 @@ const LEADER_SELECT = `
 // HACS modules in the user-installable sense (e.g. hacs/integration
 // itself) — kept in the catalogue so re-discovery doesn't re-add them,
 // but hidden from every public surface.
-const ACTIVE_ONLY = "r.state = 'active' AND r.suppressed = 0";
+//
+// Stale-3y rule: repos with no default-branch commit in 3+ years are
+// hidden from every listing even if HACS still lists them as default.
+// The data is kept (so /pending/removed pages can still surface them
+// and we don't lose history) but they're treated as abandoned for
+// listing purposes. last_commit_at IS NULL means "we don't know yet"
+// (e.g. a freshly auto-approved row before the first scrape) — keep
+// those visible until we have a real signal.
+const STALE_CUTOFF = "date('now', '-3 years')";
+const ACTIVE_ONLY = `r.state = 'active' AND r.suppressed = 0
+  AND (latest.last_commit_at IS NULL OR latest.last_commit_at > ${STALE_CUTOFF})`;
 
 export function topByStars(db: Db, limit = 20): LeaderRow[] {
   return db.raw
@@ -272,9 +282,13 @@ export function searchRepos(db: Db, opts: SearchOptions): SearchResult {
   const hasQ = opts.q.length > 0;
   const orderBy = ORDER_BY_BY_SORT[sort];
 
-  // Always exclude suppressed rows from search — keeps platform/meta repos
-  // (hacs/integration etc) from polluting results.
-  const wheres: string[] = ['r.suppressed = 0'];
+  // Always exclude suppressed + stale-3y rows. The stale predicate needs
+  // last_commit_at from the latest snapshot — both queries below JOIN to
+  // `latest` so the predicate can reference latest.last_commit_at.
+  const wheres: string[] = [
+    'r.suppressed = 0',
+    `(latest.last_commit_at IS NULL OR latest.last_commit_at > ${STALE_CUTOFF})`,
+  ];
   const params: unknown[] = [];
   if (hasQ) {
     wheres.push(
@@ -297,10 +311,18 @@ export function searchRepos(db: Db, opts: SearchOptions): SearchResult {
   }
   const whereClause = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
 
-  // Cheap COUNT(*) — uses the same WHERE but no joins. ~5ms on 3.3k rows.
+  // COUNT(*) uses the same WHERE — must JOIN `latest` for the stale-3y
+  // predicate. The inner SELECT MAX(snapshot_date) is one row regardless
+  // of repo count; the JOIN itself is on indexed (repo_id, snapshot_date).
+  const latestJoin = `LEFT JOIN (
+      SELECT repo_id, last_commit_at FROM repo_snapshots
+      WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM repo_snapshots)
+    ) latest ON latest.repo_id = r.id`;
   const total =
     db.raw
-      .prepare<unknown[], { n: number }>(`SELECT COUNT(*) AS n FROM repos r ${whereClause}`)
+      .prepare<unknown[], { n: number }>(
+        `SELECT COUNT(*) AS n FROM repos r ${latestJoin} ${whereClause}`,
+      )
       .get(...params)?.n ?? 0;
 
   const pageParams = [...params, limit, offset];

@@ -134,10 +134,26 @@ export interface DiscoveryResult {
   rejectedFork: number;
   rejectedNoMeaningfulFields: number;
   rejectedNoManifest: number;
+  /** Candidates whose GitHub pushed_at was older than 3 years — no point
+   * queueing repos that are clearly abandoned. */
+  rejectedStale: number;
+  /** Candidates with 0 stars. The skip-set excludes auto-rejected rows,
+   * so if the repo later picks up stars the next sweep will re-find it
+   * — this just keeps the queue manageable in the meantime. */
+  rejectedZeroStars: number;
   alreadyKnown: number;
   /** How many of `candidates` cleared the autoApprove thresholds. */
   autoApproved: number;
 }
+
+/** Discovery uses a stricter 1-year staleness bar than the listing
+ * filter (3y). Rationale: discovery is unattended — code-search hits
+ * have no human vouching for them, so we want a higher freshness bar
+ * before adding more work to the admin queue. Users CAN still surface
+ * a 1–3y repo via the public /submit form (where they're personally
+ * vouching for it); the listing-time 3y rule then hides it anyway if it
+ * goes past three. */
+const STALE_MS = 365 * 24 * 60 * 60 * 1000;
 
 /**
  * Pure validation helper — exported for tests. Given a parsed hacs.json
@@ -248,6 +264,8 @@ export async function discoverCustomRepos(opts: DiscoveryOptions): Promise<Disco
     rejectedFork: 0,
     rejectedNoMeaningfulFields: 0,
     rejectedNoManifest: 0,
+    rejectedStale: 0,
+    rejectedZeroStars: 0,
     alreadyKnown: 0,
     autoApproved: 0,
   };
@@ -324,6 +342,21 @@ export async function discoverCustomRepos(opts: DiscoveryOptions): Promise<Disco
       let description: string | null | undefined;
       const details = await fetchRepoDetails(fullName, opts.token, fetchImpl);
       if (details) {
+        // Hard reject anything older than 3 years — no point queueing a
+        // repo we'd hide from every listing the moment it was accepted.
+        const pushedMs = Date.parse(details.pushedAt);
+        if (Number.isFinite(pushedMs) && now - pushedMs > STALE_MS) {
+          result.rejectedStale++;
+          continue;
+        }
+        // Hard reject 0-star repos. If the repo later picks up stars
+        // the next sweep will re-find it (auto-rejected rows are
+        // excluded from the discover skip-set) — this just keeps the
+        // queue manageable in the meantime.
+        if (details.stars === 0) {
+          result.rejectedZeroStars++;
+          continue;
+        }
         stars = details.stars;
         pushedAt = details.pushedAt;
         description = details.description;

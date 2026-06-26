@@ -68,7 +68,22 @@ async function main(): Promise<void> {
   for (const r of db.raw.prepare<[], { full_name: string }>('SELECT full_name FROM repos').all()) {
     known.add(r.full_name);
   }
-  const queueRows = db.raw.prepare<[], { url: string }>('SELECT url FROM discovery_queue').all();
+  // Skip-set: every URL we shouldn't re-queue. We INCLUDE manual
+  // rejections (an admin actively said no) but EXCLUDE auto-rejections
+  // tagged in notes — those were rejected for reasons that can change
+  // upstream (e.g. stale-pushed_at on a repo that later wakes up). When
+  // such a repo gets a fresh commit it should come back through
+  // discovery and re-queue. Auto-reject notes always contain the
+  // markers 'auto-rejected' or 'sweep:'; manual ones don't (the admin
+  // form passes null notes).
+  const queueRows = db.raw
+    .prepare<[], { url: string }>(`SELECT url FROM discovery_queue
+       WHERE NOT (
+         status = 'rejected'
+         AND notes IS NOT NULL
+         AND (notes LIKE '%auto-rejected%' OR notes LIKE '%sweep:%')
+       )`)
+    .all();
   for (const row of queueRows) {
     const m = /github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)$/.exec(row.url);
     if (m?.[1]) known.add(m[1]);
@@ -121,6 +136,8 @@ async function main(): Promise<void> {
     rejected_fork: result.rejectedFork,
     rejected_no_manifest: result.rejectedNoManifest,
     rejected_not_meaningful: result.rejectedNoMeaningfulFields,
+    rejected_stale_3y: result.rejectedStale,
+    rejected_zero_stars: result.rejectedZeroStars,
     already_known: result.alreadyKnown,
   });
 

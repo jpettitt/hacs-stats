@@ -232,6 +232,10 @@ section > h2 { margin-bottom: .75rem; }
 .tag-submitted  { color: #047857; border-color: #047857; }
 .tag-fork       { color: #92400e; border-color: #92400e; }
 .tag-archived   { color: var(--text-dimmer); border-color: var(--text-dimmer); }
+/* Unmaintained: amber outline — louder than 'fork' / 'archived' (which
+   could just mean "I moved the project") because it's a real safety
+   signal about install-now-bugs-later risk. */
+.tag-unmaintained { color: #b45309; border-color: #b45309; }
 /* Tooltips: each badge with a data-tip is focusable (tabindex=0) and
    shows the tooltip on hover / keyboard focus / tap-focus. Native
    title="..." was too slow on desktop and invisible on mobile — this CSS
@@ -269,10 +273,11 @@ section > h2 { margin-bottom: .75rem; }
    and should be impossible to miss. */
 .tag-pending    { background: var(--accent); color: white; border-color: var(--accent); }
 @media (prefers-color-scheme: dark) {
-  .tag-hacs      { background: #3b82f6; border-color: #3b82f6; }
-  .tag-submitted { color: #34d399; border-color: #34d399; }
-  .tag-fork      { color: #fbbf24; border-color: #fbbf24; }
-  .tag-pending   { color: #0f172a; }
+  .tag-hacs        { background: #3b82f6; border-color: #3b82f6; }
+  .tag-submitted   { color: #34d399; border-color: #34d399; }
+  .tag-fork        { color: #fbbf24; border-color: #fbbf24; }
+  .tag-unmaintained{ color: #f59e0b; border-color: #f59e0b; }
+  .tag-pending     { color: #0f172a; }
 }
 
 /* ---------- admin queue: related projects block --------------------- */

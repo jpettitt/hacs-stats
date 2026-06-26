@@ -94,6 +94,20 @@ describe('leaders.topByStars', () => {
     }
     expect(leaders.topByStars(db, 3)).toHaveLength(3);
   });
+
+  it('hides repos with no commit in 3+ years even when stars are high', () => {
+    const db = freshDb();
+    const stale = seedRepo(db, 'old', 'old');
+    const fresh = seedRepo(db, 'new', 'new');
+    const ancient = new Date(Date.now() - 4 * 365 * 24 * 60 * 60 * 1000).toISOString();
+    const recent = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    // Stale repo has 9999 stars — would dominate the leaderboard if not
+    // filtered. Stale-3y rule kicks in regardless of how popular it was.
+    seedStats(db, stale, { stars: 9999, last_commit: ancient });
+    seedStats(db, fresh, { stars: 1, last_commit: recent });
+    const top = leaders.topByStars(db, 10);
+    expect(top.map((r) => r.full_name)).toEqual(['new/new']);
+  });
 });
 
 describe('leaders.trendingByStars', () => {
