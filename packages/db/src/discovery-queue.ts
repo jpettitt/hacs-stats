@@ -55,9 +55,10 @@ export type SortDir = 'asc' | 'desc';
 export function listQueueByStatus(
   db: Db,
   status: DiscoveryStatus,
-  limit = 200,
+  limit = 50,
   sort: QueueSort = 'discovered',
   dir: SortDir = 'desc',
+  offset = 0,
 ): QueueItem[] {
   const dirSql = dir === 'asc' ? 'ASC' : 'DESC';
   // CASE-WHEN keeps NULLs at the END regardless of direction. SQLite sorts
@@ -70,12 +71,12 @@ export function listQueueByStatus(
         ? `CASE WHEN pushed_at IS NULL THEN 1 ELSE 0 END, pushed_at ${dirSql}, discovered_at DESC`
         : `discovered_at ${dirSql}`;
   return db.raw
-    .prepare<[DiscoveryStatus, number], QueueItem>(
+    .prepare<[DiscoveryStatus, number, number], QueueItem>(
       `SELECT url, source, discovered_at, status, notes, stars, pushed_at, description
        FROM discovery_queue WHERE status = ?
-       ORDER BY ${orderBy} LIMIT ?`,
+       ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
     )
-    .all(status, limit);
+    .all(status, limit, offset);
 }
 
 export function countQueueByStatus(db: Db): Record<DiscoveryStatus, number> {

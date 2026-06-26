@@ -209,6 +209,7 @@ app.get('/r/:owner/:name', (c) => {
 });
 
 const SEARCH_PAGE_SIZE = 50;
+const QUEUE_PAGE_SIZE = 50;
 const CATEGORY_PAGE_SIZE = 50;
 
 function parsePage(raw: string | undefined): number {
@@ -416,8 +417,16 @@ app.get('/admin/queue', (c) => {
   const sort: 'discovered' | 'stars' | 'pushed' =
     rawSort === 'stars' || rawSort === 'pushed' ? rawSort : 'discovered';
   const dir: 'asc' | 'desc' = c.req.query('dir') === 'asc' ? 'asc' : 'desc';
-  const pending = discoveryQueue.listQueueByStatus(db, status, 200, sort, dir);
+  const page = parsePage(c.req.query('page'));
   const totals = discoveryQueue.countQueueByStatus(db);
+  const pending = discoveryQueue.listQueueByStatus(
+    db,
+    status,
+    QUEUE_PAGE_SIZE,
+    sort,
+    dir,
+    (page - 1) * QUEUE_PAGE_SIZE,
+  );
   const msg = c.req.query('msg');
   // Enrich each queue item with "related projects" — other repos in our
   // catalogue owned by the same GitHub owner. Helps the admin recognise
@@ -455,6 +464,8 @@ app.get('/admin/queue', (c) => {
         status,
         sort,
         dir,
+        page,
+        pageSize: QUEUE_PAGE_SIZE,
         ...(msg !== undefined ? { flash: msg } : {}),
         ...(listingRows ? { listingRows } : {}),
       }),

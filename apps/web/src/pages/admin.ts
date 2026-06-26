@@ -1,4 +1,4 @@
-import { fmtInt, renderLeaderTable } from '../components.js';
+import { fmtInt, renderLeaderTable, renderPagination } from '../components.js';
 import { escapeHtml } from '../sanitize.js';
 
 /** Row shape consumed by renderLeaderTable — mirrors what the search /
@@ -63,6 +63,8 @@ export interface AdminPageProps {
    * headers. */
   sort: 'discovered' | 'stars' | 'pushed';
   dir: 'asc' | 'desc';
+  page: number;
+  pageSize: number;
   /** Flash message from the prior action (?msg=accepted|rejected|error). */
   flash?: string;
   /** When provided (accepted tab only), the page renders these via the
@@ -81,13 +83,17 @@ export function renderAdminPage(props: AdminPageProps): string {
   // Tabs let the admin browse audit-trail rows (auto-approved, manually
   // accepted, rejected) — not just the pending work queue. Each tab is a
   // plain link so the URL is shareable.
+  // Tabs preserve sort/dir so flipping from "pending sorted by stars desc"
+  // to "accepted sorted by stars desc" keeps the lens. Page resets to 1
+  // intentionally — a tab switch is conceptually a new view.
   const tab = (
     key: 'pending' | 'accepted' | 'rejected' | 'error',
     label: string,
     count: number,
   ) => {
     const active = props.status === key;
-    return `<a href="/admin/queue?status=${key}" class="${active ? 'tab tab-active' : 'tab'}">${label} <span class="muted small">(${count})</span></a>`;
+    const href = `/admin/queue?status=${key}&sort=${props.sort}&dir=${props.dir}`;
+    return `<a href="${href}" class="${active ? 'tab tab-active' : 'tab'}">${label} <span class="muted small">(${count})</span></a>`;
   };
   const tabs = `
     <nav class="tabs">
@@ -104,6 +110,14 @@ export function renderAdminPage(props: AdminPageProps): string {
       <p class="muted">No <strong>${escapeHtml(props.status)}</strong> rows.
         Run <code>pnpm discover</code> on the server to look for new ones.</p>`;
   }
+  const totalForStatus = props.totals[props.status];
+  const pagination = renderPagination({
+    page: props.page,
+    pageSize: props.pageSize,
+    total: totalForStatus,
+    baseUrl: `/admin/queue?status=${props.status}&sort=${props.sort}&dir=${props.dir}`,
+  });
+
   // Accepted tab: render the shared listing component (same format as
   // search / category pages) instead of the queue-style table. Links go to
   // /r/<full_name> because these repos are in our catalogue.
@@ -115,7 +129,8 @@ export function renderAdminPage(props: AdminPageProps): string {
       ${renderLeaderTable(props.listingRows, {
         valueLabel: 'Stars',
         formatValue: (r) => fmtInt(r.stars),
-      })}`;
+      })}
+      ${pagination}`;
   }
   const nowMs = Date.now();
   const rows = props.pending
@@ -126,6 +141,10 @@ export function renderAdminPage(props: AdminPageProps): string {
       const safeDesc = it.description ? escapeHtml(it.description) : '';
       const starsCell = it.stars === null ? '—' : fmtInt(it.stars);
       const pushedCell = fmtPushedAgo(it.pushed_at, nowMs);
+      // Only render the related block when there's actually something to
+      // show — the "first repo we've seen from this owner" empty state
+      // wasn't telling the admin anything they couldn't tell from the
+      // absence itself, and at 200-row queue density it became noise.
       const related =
         it.related && it.related.length > 0
           ? `<div class="related muted small">
@@ -140,7 +159,7 @@ export function renderAdminPage(props: AdminPageProps): string {
                 )
                 .join(', ')}${it.related.length > 8 ? `, +${it.related.length - 8} more` : ''}
             </div>`
-          : `<div class="related muted small">First repo we've seen from this owner.</div>`;
+          : '';
       // Accept/Reject buttons only make sense on pending rows — accepted /
       // rejected rows are already decided; surfacing the buttons would let
       // the admin "re-accept" a row that no longer corresponds to a queue
@@ -191,7 +210,9 @@ export function renderAdminPage(props: AdminPageProps): string {
     const isActive = props.sort === col;
     const nextDir = isActive && props.dir === 'desc' ? 'asc' : 'desc';
     const arrow = isActive ? (props.dir === 'desc' ? ' ▼' : ' ▲') : '';
-    const href = `/admin/queue?status=${props.status}&sort=${col}&dir=${nextDir}`;
+    // Sort change resets to page 1 — paging on a sort the user just
+    // toggled mid-stream is more confusing than starting over.
+    const href = `/admin/queue?status=${props.status}&sort=${col}&dir=${nextDir}&page=1`;
     const cls = `${align}${isActive ? ' sort-active' : ''}`.trim();
     return `<th class="${cls}"><a href="${href}">${escapeHtml(label)}${arrow}</a></th>`;
   };
@@ -209,5 +230,6 @@ export function renderAdminPage(props: AdminPageProps): string {
         <th>Action</th>
       </tr></thead>
       <tbody>${rows}</tbody>
-    </table>`;
+    </table>
+    ${pagination}`;
 }

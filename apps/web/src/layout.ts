@@ -221,15 +221,24 @@ section > h2 { margin-bottom: .75rem; }
   vertical-align: middle;
   border: 1px solid transparent;
 }
+/* HACS badge: solid blue fill so the "officially listed" status is the
+   most prominent provenance signal — defaults are the highest-trust
+   bucket and a hollow outline made them disappear next to discovered. */
+.tag-hacs       { background: #1e40af; color: white; border-color: #1e40af; }
 .tag-discovered { color: var(--accent); border-color: var(--accent); }
 .tag-submitted  { color: #047857; border-color: #047857; }
 .tag-fork       { color: #92400e; border-color: #92400e; }
 .tag-archived   { color: var(--text-dimmer); border-color: var(--text-dimmer); }
+/* Tooltips are surfaced via title="..." on each .tag — cursor:help cues
+   the user that hovering will reveal more. On touch devices, long-press
+   triggers the native title popover. */
+.tag[title]     { cursor: help; }
 /* Pending = solid fill in the accent colour, NOT a muted outline — this is
    the most important context ("the numbers next to me aren't real yet")
    and should be impossible to miss. */
 .tag-pending    { background: var(--accent); color: white; border-color: var(--accent); }
 @media (prefers-color-scheme: dark) {
+  .tag-hacs      { background: #3b82f6; border-color: #3b82f6; }
   .tag-submitted { color: #34d399; border-color: #34d399; }
   .tag-fork      { color: #fbbf24; border-color: #fbbf24; }
   .tag-pending   { color: #0f172a; }

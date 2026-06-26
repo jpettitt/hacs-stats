@@ -114,10 +114,30 @@ export function repoTags(row: {
   } else if (state === 'removed') {
     tags.push('<span class="tag tag-removed" title="Unreachable for 30+ days">removed</span>');
   }
-  if (row.source === 'discovered') tags.push('<span class="tag tag-discovered">discovered</span>');
-  if (row.source === 'submitted') tags.push('<span class="tag tag-submitted">submitted</span>');
-  if (row.is_fork) tags.push('<span class="tag tag-fork">fork</span>');
-  if (row.archived) tags.push('<span class="tag tag-archived">archived</span>');
+  // Source badge — every row gets one so the provenance is visible at a
+  // glance. The title attribute is the hover/tap tooltip explaining what
+  // the badge means; same content surfaces on long-press on mobile.
+  if (row.source === 'default') {
+    tags.push(
+      '<span class="tag tag-hacs" title="Listed in the official HACS default catalogue (github.com/hacs/default). Installs by name in HACS without adding a custom repository.">HACS</span>',
+    );
+  } else if (row.source === 'discovered') {
+    tags.push(
+      '<span class="tag tag-discovered" title="Found by our GitHub code-search for hacs.json. Not in the official HACS list — installable as a HACS custom repository.">discovered</span>',
+    );
+  } else if (row.source === 'submitted') {
+    tags.push(
+      '<span class="tag tag-submitted" title="Added via the public /submit form. Not in the official HACS list — installable as a HACS custom repository.">submitted</span>',
+    );
+  }
+  if (row.is_fork)
+    tags.push(
+      '<span class="tag tag-fork" title="Fork of another GitHub repo. Stats reflect this fork only.">fork</span>',
+    );
+  if (row.archived)
+    tags.push(
+      '<span class="tag tag-archived" title="Marked archived on GitHub — read-only; no longer maintained.">archived</span>',
+    );
   return tags.length ? ` ${tags.join(' ')}` : '';
 }
 
