@@ -32,7 +32,14 @@
  *                                  (default 6).
  *   AUTOAPPROVE_OFF=1              Disable auto-approve, queue everything.
  */
-import { discoveryQueue, openDb, repos, resolveDatabasePath, runMigrations } from '@hacs-stats/db';
+import {
+  discoveryQueue,
+  openDb,
+  repos,
+  resolveDatabasePath,
+  runMigrations,
+  snapshots,
+} from '@hacs-stats/db';
 import { discoverCustomRepos } from '../apps/scraper/src/discovery.js';
 
 const DATABASE_PATH = resolveDatabasePath();
@@ -144,12 +151,27 @@ async function main(): Promise<void> {
     const nowIso = new Date().toISOString();
     for (const c of result.candidates) {
       if (c.autoApprove) {
-        repos.upsertRepo(db, {
+        const repoId = repos.upsertRepo(db, {
           owner: c.owner,
           name: c.name,
           kind: c.kind,
           source: 'discovered',
         });
+        // Seed today's snapshot with the stars we already know about so
+        // the row doesn't show "0 stars" between auto-approval and the
+        // next nightly scrape (which is what the user was seeing on
+        // /pending). Forks / open_issues are placeholders — the next
+        // scrape overwrites this row with the full GraphQL values.
+        if (typeof c.stars === 'number') {
+          snapshots.upsertRepoSnapshot(db, {
+            repoId,
+            snapshotDate: nowIso.slice(0, 10),
+            stars: c.stars,
+            forks: 0,
+            openIssues: 0,
+            lastCommitAt: c.pushedAt ?? null,
+          });
+        }
         insertQueueAccepted.run(
           c.htmlUrl,
           nowIso,

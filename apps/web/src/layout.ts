@@ -225,14 +225,45 @@ section > h2 { margin-bottom: .75rem; }
    most prominent provenance signal — defaults are the highest-trust
    bucket and a hollow outline made them disappear next to discovered. */
 .tag-hacs       { background: #1e40af; color: white; border-color: #1e40af; }
+/* Kind badge: muted neutral so it doesn't compete with the HACS / source
+   tag visually — it's reference info, not provenance. */
+.tag-kind       { color: var(--text-muted); border-color: var(--border); background: var(--bg); }
 .tag-discovered { color: var(--accent); border-color: var(--accent); }
 .tag-submitted  { color: #047857; border-color: #047857; }
 .tag-fork       { color: #92400e; border-color: #92400e; }
 .tag-archived   { color: var(--text-dimmer); border-color: var(--text-dimmer); }
-/* Tooltips are surfaced via title="..." on each .tag — cursor:help cues
-   the user that hovering will reveal more. On touch devices, long-press
-   triggers the native title popover. */
-.tag[title]     { cursor: help; }
+/* Tooltips: each badge with a data-tip is focusable (tabindex=0) and
+   shows the tooltip on hover / keyboard focus / tap-focus. Native
+   title="..." was too slow on desktop and invisible on mobile — this CSS
+   bubble is immediate on hover and survives a tap on touch devices
+   because the span is focusable. */
+.tag[data-tip]  { cursor: help; position: relative; outline: none; }
+.tag[data-tip]:hover::after,
+.tag[data-tip]:focus::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 0;
+  top: calc(100% + .35rem);
+  z-index: 100;
+  display: block;
+  padding: .55rem .75rem;
+  width: max-content;
+  max-width: 22rem;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: .35rem;
+  box-shadow: 0 8px 20px rgba(0,0,0,.18);
+  font-size: .8rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.4;
+  white-space: normal;
+  pointer-events: none;
+}
+/* Tap-anywhere-else to dismiss is automatic: tapping outside the focused
+   span removes focus, hiding the bubble. */
 /* Pending = solid fill in the accent colour, NOT a muted outline — this is
    the most important context ("the numbers next to me aren't real yet")
    and should be impossible to miss. */
@@ -290,6 +321,17 @@ section > h2 { margin-bottom: .75rem; }
 th.sort-active { color: var(--accent); }
 th a { color: inherit; text-decoration: none; }
 th a:hover { text-decoration: underline; }
+
+/* ---------- home page "See all" links inside section headers ------- */
+.more-link {
+  margin-left: .75rem;
+  font-size: .85rem;
+  font-weight: 400;
+  color: var(--accent);
+  text-decoration: none;
+  vertical-align: middle;
+}
+.more-link:hover { text-decoration: underline; }
 
 /* ---------- lifecycle banners (pending / offline / removed) --------- */
 .banner {
@@ -417,6 +459,22 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: now
    column doesn't get squashed on wide leaderboards. */
 .desc-col { max-width: 32rem; }
 table { table-layout: auto; }
+
+/* Mobile: 5 columns (Repo / Description / Kind / secondary / Stars) don't
+   fit at phone widths and the parent's overflow:hidden clipped the right
+   half off. Drop the description, tighten padding, and let any remaining
+   overflow scroll horizontally rather than disappearing. */
+@media (max-width: 720px) {
+  .desc-col { display: none; }
+  th, td { padding: .4rem .55rem; font-size: .85rem; }
+  /* Make every table its own horizontal scroll container. display:block
+     loses table-cell sizing, so we restore it on the children — net
+     result: native table layout INSIDE, scrollable wrapper OUTSIDE. */
+  table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table > thead, table > tbody { display: table; width: 100%; }
+  table > thead > tr, table > tbody > tr { display: table-row; }
+  table th, table td { display: table-cell; }
+}
 
 /* ---------- repo name --------------------------------------------- */
 a.repo-name { text-decoration: none; color: var(--text); }

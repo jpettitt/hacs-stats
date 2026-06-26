@@ -97,14 +97,14 @@ describe('leaders.topByStars', () => {
 });
 
 describe('leaders.trendingByStars', () => {
-  it('only includes repos with positive 7-day delta', () => {
+  it('only includes repos with positive 30-day star delta', () => {
     const db = freshDb();
     const a = seedRepo(db, 'a', 'a');
     const b = seedRepo(db, 'b', 'b');
     const c = seedRepo(db, 'c', 'c');
-    seedStats(db, a, { stars: 100, star_delta_7d: 5 });
-    seedStats(db, b, { stars: 50, star_delta_7d: 0 }); // not trending
-    seedStats(db, c, { stars: 200, star_delta_7d: 20 });
+    seedStats(db, a, { stars: 100, star_delta_30d: 5 });
+    seedStats(db, b, { stars: 50, star_delta_30d: 0 }); // not trending
+    seedStats(db, c, { stars: 200, star_delta_30d: 20 });
     const t = leaders.trendingByStars(db, 10);
     expect(t.map((r) => r.full_name)).toEqual(['c/c', 'a/a']);
   });
@@ -310,12 +310,12 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'c/c', 'a/a']);
   });
 
-  it('sort=trending orders by latest_release_downloads_30d (clean install signal) DESC', () => {
+  it('sort=trending orders by 30-day star delta DESC (matches home Trending section)', () => {
     const db = freshDb();
     const a = seedRepo(db, 'a', 'a');
     const b = seedRepo(db, 'b', 'b');
-    seedStats(db, a, { stars: 1, latest_release_downloads_30d: 10 });
-    seedStats(db, b, { stars: 1, latest_release_downloads_30d: 500 });
+    seedStats(db, a, { stars: 1, star_delta_30d: 3 });
+    seedStats(db, b, { stars: 1, star_delta_30d: 42 });
     const hits = leaders.searchRepos(db, { q: '', sort: 'trending' }).rows;
     expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'a/a']);
   });

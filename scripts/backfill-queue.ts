@@ -19,7 +19,7 @@
  *   AUTOAPPROVE_MAX_AGE_MONTHS          default 6
  *   AUTOAPPROVE_OFF=1                   skip the promotion step entirely
  */
-import { openDb, repos, resolveDatabasePath, runMigrations } from '@hacs-stats/db';
+import { openDb, repos, resolveDatabasePath, runMigrations, snapshots } from '@hacs-stats/db';
 
 const DATABASE_PATH = resolveDatabasePath();
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -164,7 +164,18 @@ async function main(): Promise<void> {
             | 'netdaemon'
             | 'python_script'
             | 'template';
-          repos.upsertRepo(db, { owner, name, kind, source: 'discovered' });
+          const repoId = repos.upsertRepo(db, { owner, name, kind, source: 'discovered' });
+          // Seed today's snapshot with the stars we just fetched so the
+          // pending row shows real numbers immediately (otherwise it sits
+          // at 0 stars until the next scrape).
+          snapshots.upsertRepoSnapshot(db, {
+            repoId,
+            snapshotDate: new Date().toISOString().slice(0, 10),
+            stars: details.stars,
+            forks: 0,
+            openIssues: 0,
+            lastCommitAt: details.pushedAt,
+          });
           promoteQueueRow.run(
             `${row.notes ?? ''}; backfilled+auto-approved (stars=${details.stars}, pushed=${details.pushedAt.slice(0, 10)})`,
             row.url,

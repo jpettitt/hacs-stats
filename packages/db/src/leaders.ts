@@ -105,12 +105,15 @@ export function topByLatestReleaseDownloads(db: Db, limit = 20): LeaderRow[] {
     .all(limit);
 }
 
+/** Top by 30-day star delta. Matches the /search?sort=trending ranking
+ * exactly so the home "Trending" section's "See all" link lands on the
+ * same metric, just paginated. */
 export function trendingByStars(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
       `${LEADER_SELECT}
-        WHERE ${ACTIVE_ONLY} AND COALESCE(sc.star_delta_7d, 0) > 0
-        ORDER BY star_delta_7d DESC, stars DESC
+        WHERE ${ACTIVE_ONLY} AND COALESCE(sc.star_delta_30d, 0) > 0
+        ORDER BY star_delta_30d DESC, stars DESC
         LIMIT ?`,
     )
     .all(limit);
@@ -204,7 +207,7 @@ export function topByCategory(db: Db, kind: RepoKind, limit = 50, offset = 0): C
   return { rows, total };
 }
 
-export const SEARCH_SORTS = ['name', 'stars', 'downloads', 'trending', 'recent'] as const;
+export const SEARCH_SORTS = ['name', 'stars', 'downloads', 'trending', 'recent', 'new'] as const;
 export type SearchSort = (typeof SEARCH_SORTS)[number];
 
 export const SEARCH_SORT_LABELS: Record<SearchSort, string> = {
@@ -213,6 +216,7 @@ export const SEARCH_SORT_LABELS: Record<SearchSort, string> = {
   downloads: 'Downloads (latest release)',
   trending: 'Trending (30d downloads delta)',
   recent: 'Recently active',
+  new: 'New arrivals',
 };
 
 // ORDER BY clauses are NEVER interpolated from user input directly — the
@@ -223,10 +227,13 @@ const ORDER_BY_BY_SORT: Record<SearchSort, string> = {
   name: "COALESCE(NULLIF(r.hacs_name, ''), r.full_name) COLLATE NOCASE ASC",
   stars: 'stars DESC, r.full_name COLLATE NOCASE ASC',
   downloads: 'latest_release_downloads DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
-  // trending uses the new clean 30d-delta on the latest release, NOT the
-  // legacy SUM-across-releases column which double-counts upgrades.
-  trending: 'latest_release_downloads_30d DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
+  // Trending = star delta over the last 30 days. Previously ranked by
+  // download delta which was a different metric than the home page's
+  // "Trending" section (star delta) — clicking "See all" from there
+  // dropped users into a list sorted by something else entirely.
+  trending: 'star_delta_30d DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
   recent: 'latest.last_commit_at DESC, r.full_name COLLATE NOCASE ASC',
+  new: 'r.first_seen_at DESC, r.id DESC',
 };
 
 export interface SearchOptions {
@@ -278,6 +285,15 @@ export function searchRepos(db: Db, opts: SearchOptions): SearchResult {
   if (opts.kind !== undefined) {
     wheres.push('r.kind = ?');
     params.push(opts.kind);
+  }
+  // Sort-specific filter: trending only makes sense for repos that
+  // actually moved. Without this, "Trending" is dominated by 7000+
+  // repos at delta=0 with the handful of real movers buried below the
+  // first page. EXISTS keeps the COUNT(*) query (no JOINs) working.
+  if (sort === 'trending') {
+    wheres.push(
+      'EXISTS (SELECT 1 FROM stats_cache sc WHERE sc.repo_id = r.id AND COALESCE(sc.star_delta_30d, 0) != 0)',
+    );
   }
   const whereClause = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
 

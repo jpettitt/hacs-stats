@@ -82,6 +82,26 @@ export function kindLabel(kind: string): string {
   return escapeHtml(KIND_LABEL[kind] ?? kind);
 }
 
+const KIND_TIP: Record<string, string> = {
+  integration:
+    'Home Assistant integration — adds a new device type / service. Installs into custom_components.',
+  plugin: 'Lovelace plugin (custom card or row). Loaded as a JS resource by the frontend.',
+  theme: 'Lovelace theme — colours, fonts, dashboard styling.',
+  appdaemon: 'AppDaemon app — Python automation that runs alongside Home Assistant.',
+  netdaemon: 'NetDaemon app — C# automation that runs alongside Home Assistant.',
+  python_script: 'Python script — small server-side script callable from automations.',
+  template: 'Jinja template macro / helper.',
+};
+
+/** Inline category badge — replaces the standalone Kind column in
+ * listings so the row stays narrow on phones. Same hover/tap tooltip
+ * pattern as repoTags(). */
+export function kindBadge(kind: string): string {
+  const label = KIND_LABEL[kind] ?? kind;
+  const tip = KIND_TIP[kind] ?? `HACS category: ${label}`;
+  return ` <span class="tag tag-kind" tabindex="0" data-tip="${escapeHtml(tip)}">${escapeHtml(label)}</span>`;
+}
+
 /**
  * Small inline badges describing where a repo came from + whether it's a
  * fork or archived. Returns "" for the common case (HACS-default, not a
@@ -103,56 +123,88 @@ export function repoTags(row: {
   // `state` is the canonical signal; `last_scraped_at IS NULL` is mostly a
   // proxy for pending and only used as a fallback when state isn't selected.
   const state = (row as { state?: string }).state;
+  // Each badge is a focusable span — tabindex=0 makes it keyboard-
+  // reachable AND lets a tap on mobile trigger :focus, which the CSS uses
+  // to surface the tooltip (`title=...` alone is invisible on touch).
+  const tip = (cls: string, label: string, text: string) =>
+    `<span class="tag ${cls}" tabindex="0" data-tip="${escapeHtml(text)}">${label}</span>`;
   if (state === 'pending' || (state === undefined && row.last_scraped_at === null)) {
     tags.push(
-      '<span class="tag tag-pending" title="Accepted but not yet scraped — numbers appear after the next nightly run">pending</span>',
+      tip(
+        'tag-pending',
+        'pending',
+        'Accepted but not yet scraped — stars / downloads appear after the next nightly run.',
+      ),
     );
   } else if (state === 'offline') {
     tags.push(
-      '<span class="tag tag-offline" title="Recent scrapes have not been able to reach this repo">offline</span>',
+      tip(
+        'tag-offline',
+        'offline',
+        'Recent scrapes have not been able to reach this repo on GitHub. Numbers below are the last known good values.',
+      ),
     );
   } else if (state === 'removed') {
-    tags.push('<span class="tag tag-removed" title="Unreachable for 30+ days">removed</span>');
+    tags.push(
+      tip(
+        'tag-removed',
+        'removed',
+        'Unreachable for 30+ days — likely deleted or made private on GitHub.',
+      ),
+    );
   }
-  // Source badge — every row gets one so the provenance is visible at a
-  // glance. The title attribute is the hover/tap tooltip explaining what
-  // the badge means; same content surfaces on long-press on mobile.
   if (row.source === 'default') {
     tags.push(
-      '<span class="tag tag-hacs" title="Listed in the official HACS default catalogue (github.com/hacs/default). Installs by name in HACS without adding a custom repository.">HACS</span>',
+      tip(
+        'tag-hacs',
+        'HACS',
+        'Listed in the official HACS default catalogue (github.com/hacs/default). Installs by name in HACS without adding a custom repository.',
+      ),
     );
   } else if (row.source === 'discovered') {
     tags.push(
-      '<span class="tag tag-discovered" title="Found by our GitHub code-search for hacs.json. Not in the official HACS list — installable as a HACS custom repository.">discovered</span>',
+      tip(
+        'tag-discovered',
+        'discovered',
+        'Found by our GitHub code-search for hacs.json. Not in the official HACS list — installable as a HACS custom repository.',
+      ),
     );
   } else if (row.source === 'submitted') {
     tags.push(
-      '<span class="tag tag-submitted" title="Added via the public /submit form. Not in the official HACS list — installable as a HACS custom repository.">submitted</span>',
+      tip(
+        'tag-submitted',
+        'submitted',
+        'Added via the public /submit form. Not in the official HACS list — installable as a HACS custom repository.',
+      ),
     );
   }
   if (row.is_fork)
     tags.push(
-      '<span class="tag tag-fork" title="Fork of another GitHub repo. Stats reflect this fork only.">fork</span>',
+      tip('tag-fork', 'fork', 'Fork of another GitHub repo. Stats reflect this fork only.'),
     );
   if (row.archived)
     tags.push(
-      '<span class="tag tag-archived" title="Marked archived on GitHub — read-only; no longer maintained.">archived</span>',
+      tip(
+        'tag-archived',
+        'archived',
+        'Marked archived on GitHub — read-only; no longer maintained.',
+      ),
     );
   return tags.length ? ` ${tags.join(' ')}` : '';
 }
 
 export interface LeaderTableOptions {
-  valueLabel: string;
+  /** Column header for the secondary cell (the one immediately to the left
+   * of the always-rightmost Stars column). */
+  secondaryLabel: string;
   /**
-   * Format one row's value cell. Returns trusted HTML — callers are
+   * Format the secondary cell. Returns trusted HTML — callers are
    * responsible for escaping any untrusted strings they interpolate. This
    * lets the caller compose richer cells (e.g. "12,345 (v3.5.0)" with the
    * tag in muted text); the alternative — auto-escape — meant any HTML
    * the caller wanted to inline got rendered as text.
    */
-  formatValue: (r: RowForList) => string;
-  /** Hide the stars-delta column when sorting by stars (it would be redundant). */
-  showStarDelta?: boolean;
+  formatSecondary: (r: RowForList) => string;
   /** Show the description column. Default true. Disable for compact tables. */
   showDescription?: boolean;
 }
@@ -203,27 +255,39 @@ export function renderPagination(p: PaginationProps): string {
   </nav>`;
 }
 
+/**
+ * Listing-table layout (single source of truth across home + search +
+ * accepted-queue tab):
+ *
+ *   Repo | (Description) | Kind | <secondary> | Stars
+ *
+ * Stars is ALWAYS the rightmost column so the user's eye lands in a
+ * consistent place. The cell to its left is the "secondary" — typically
+ * whatever the page sorted by. When the sort IS stars (or name, where
+ * stars is the natural ranking signal), the secondary becomes Stars
+ * Δ 30d so we're not showing two identical numbers next to each other.
+ *
+ * Callers used to pass `valueLabel` + `formatValue` + `showStarDelta` —
+ * the new shape collapses those into one secondary slot. `showStarDelta`
+ * is gone; the secondary is whatever the caller decides.
+ */
 export function renderLeaderTable(rows: RowForList[], opts: LeaderTableOptions): string {
-  const showDelta = opts.showStarDelta ?? true;
   const showDesc = opts.showDescription ?? true;
   const head = `<tr>
     <th>Repo</th>
     ${showDesc ? '<th class="desc-col">Description</th>' : ''}
-    <th>Kind</th>
-    <th class="num">${escapeHtml(opts.valueLabel)}</th>
-    ${showDelta ? '<th class="num">Stars Δ30d</th>' : ''}
+    <th class="num">${escapeHtml(opts.secondaryLabel)}</th>
+    <th class="num">Stars</th>
   </tr>`;
-  // Listings filter to state='active' upstream, so we don't expect to see
-  // pending/offline/removed here — em-dash fallback removed in favour of the
-  // banner-on-detail-page approach (see pages/repo.ts).
+  // Kind moved into the Repo cell as a tag (with hover/tap tooltip) so we
+  // can shed a whole column — at phone widths the row was running off-screen.
   const body = rows
     .map(
       (r) => `<tr>
-        <td>${repoLink(r.full_name, r.hacs_name)}${repoTags(r)}</td>
+        <td>${repoLink(r.full_name, r.hacs_name)}${kindBadge(r.kind)}${repoTags(r)}</td>
         ${showDesc ? `<td class="desc-col muted small">${r.description ? escapeHtml(clip(r.description, 110)) : ''}</td>` : ''}
-        <td class="kind">${kindLabel(r.kind)}</td>
-        <td class="num">${opts.formatValue(r)}</td>
-        ${showDelta ? `<td class="num small">${escapeHtml(fmtDelta(r.star_delta_30d))}</td>` : ''}
+        <td class="num">${opts.formatSecondary(r)}</td>
+        <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
       </tr>`,
     )
     .join('');

@@ -6,7 +6,7 @@ import { Hono } from 'hono';
 import { renderLayout } from './layout.js';
 import { renderAboutPage } from './pages/about.js';
 import { renderAdminPage } from './pages/admin.js';
-import { renderCategoriesIndex, renderCategoryPage } from './pages/category.js';
+import { renderCategoriesIndex } from './pages/category.js';
 import { renderHome } from './pages/home.js';
 import { renderPendingPage, renderRemovedPage } from './pages/lifecycle.js';
 import { renderOwnerPage } from './pages/owner.js';
@@ -86,6 +86,11 @@ app.get('/categories', (c) => {
   return c.html(renderLayout({ title: 'Categories — hacs-stats', navActive: 'categories', body }));
 });
 
+// /category/:kind is now an alias for /search?kind=…&sort=stars. There's
+// only one listing render path (the search page) so the category view
+// stays consistent with every other "show me a filtered list" entry
+// point. 302 (not 301) keeps bookmarks pointing at the alias if we ever
+// want to revive a dedicated category renderer.
 app.get('/category/:kind', (c) => {
   const kind = c.req.param('kind');
   if (!isRepoKind(kind)) {
@@ -98,21 +103,7 @@ app.get('/category/:kind', (c) => {
       404,
     );
   }
-  const page = parsePage(c.req.query('page'));
-  const pageData = leaders.topByCategory(
-    db,
-    kind,
-    CATEGORY_PAGE_SIZE,
-    (page - 1) * CATEGORY_PAGE_SIZE,
-  );
-  const body = renderCategoryPage({
-    kind,
-    rows: pageData.rows,
-    page,
-    pageSize: CATEGORY_PAGE_SIZE,
-    total: pageData.total,
-  });
-  return c.html(renderLayout({ title: `${kind} — hacs-stats`, navActive: 'categories', body }));
+  return c.redirect(`/search?kind=${encodeURIComponent(kind)}&sort=stars`, 302);
 });
 
 app.get('/owner/:owner', (c) => {
@@ -210,7 +201,6 @@ app.get('/r/:owner/:name', (c) => {
 
 const SEARCH_PAGE_SIZE = 50;
 const QUEUE_PAGE_SIZE = 50;
-const CATEGORY_PAGE_SIZE = 50;
 
 function parsePage(raw: string | undefined): number {
   const n = Number(raw);
@@ -232,19 +222,18 @@ app.get('/search', (c) => {
   const kind = isRepoKind(kindRaw) ? kindRaw : undefined;
   const page = parsePage(c.req.query('page'));
 
-  // Run a query when the user gave us q, kind, or non-default sort. Empty-
-  // everything renders the bare filter bar (no point listing all 3.3k repos
-  // by default — that's what /categories is for).
-  const shouldQuery = q.length >= 2 || kind !== undefined;
-  const result = shouldQuery
-    ? leaders.searchRepos(db, {
-        q,
-        sort,
-        ...(kind !== undefined ? { kind } : {}),
-        limit: SEARCH_PAGE_SIZE,
-        offset: (page - 1) * SEARCH_PAGE_SIZE,
-      })
-    : { rows: [], total: 0 };
+  // Always run the query — /search is the single listing surface (home
+  // sections, category cards, and direct visits all land here). An empty
+  // q + no kind + default sort means "show everything sorted by name",
+  // which is what the home page's "See all" links lean on. Pagination
+  // keeps this from being a 7000-row firehose.
+  const result = leaders.searchRepos(db, {
+    q,
+    sort,
+    ...(kind !== undefined ? { kind } : {}),
+    limit: SEARCH_PAGE_SIZE,
+    offset: (page - 1) * SEARCH_PAGE_SIZE,
+  });
 
   const body = renderSearchPage({
     query: q,

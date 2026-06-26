@@ -1,4 +1,4 @@
-import { fmtInt, kindLabel, repoTags } from '../components.js';
+import { fmtInt, kindBadge, repoTags } from '../components.js';
 import { escapeHtml } from '../sanitize.js';
 
 export interface OwnerRow {
@@ -46,11 +46,10 @@ export function renderOwnerPage(props: OwnerPageProps): string {
         : '<span class="muted">—</span>';
       return `<tr>
         <td>
-          <a href="/r/${safeFull}">${safeName}</a>${tags}${stateBadge}
+          <a href="/r/${safeFull}">${safeName}</a>${kindBadge(r.kind)}${tags}${stateBadge}
           <div class="muted small">${safeFull}</div>
           ${desc ? `<div class="muted small">${desc}</div>` : ''}
         </td>
-        <td>${kindLabel(r.kind)}</td>
         <td class="num">${fmtInt(r.stars)}</td>
         <td class="num">${releaseDl}</td>
       </tr>`;
@@ -61,7 +60,7 @@ export function renderOwnerPage(props: OwnerPageProps): string {
     <p class="muted small"><a href="${ghUrl}" target="_blank" rel="noopener noreferrer">${safeOwner} on GitHub ↗</a></p>
     <table>
       <thead>
-        <tr><th>Repo</th><th>Kind</th><th class="num">Stars</th><th class="num">Downloads (latest)</th></tr>
+        <tr><th>Repo</th><th class="num">Stars</th><th class="num">Downloads (latest)</th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>`;

@@ -127,8 +127,8 @@ export function renderAdminPage(props: AdminPageProps): string {
       ${tabs}
       ${flash}
       ${renderLeaderTable(props.listingRows, {
-        valueLabel: 'Stars',
-        formatValue: (r) => fmtInt(r.stars),
+        secondaryLabel: 'Stars Δ 30d',
+        formatSecondary: (r) => fmtInt(r.star_delta_30d),
       })}
       ${pagination}`;
   }
