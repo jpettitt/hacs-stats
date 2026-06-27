@@ -7,9 +7,13 @@ Wants=network-online.target
 Type=simple
 User=hacs-stats
 Group=hacs-stats
-WorkingDirectory=/opt/hacs-stats
+WorkingDirectory=/opt/hacs-stats/apps/web
 EnvironmentFile=/etc/hacs-stats/env
-ExecStart=/usr/bin/pnpm --filter @hacs-stats/web start
+# Invoke node directly — pnpm 11 runs a "verify deps before run" step that
+# tries to write under WorkingDirectory, which collides with the
+# ProtectSystem=strict hardening below. node + tsx loader does the same
+# work without the package-manager scaffolding.
+ExecStart=/usr/bin/node --import tsx src/index.ts
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

@@ -7,9 +7,10 @@ Wants=network-online.target
 Type=oneshot
 User=hacs-stats
 Group=hacs-stats
-WorkingDirectory=/opt/hacs-stats
+WorkingDirectory=/opt/hacs-stats/apps/scraper
 EnvironmentFile=/etc/hacs-stats/env
-ExecStart=/usr/bin/pnpm --filter @hacs-stats/scraper start
+# See hacs-stats-web.service for why node-directly instead of pnpm.
+ExecStart=/usr/bin/node --import tsx src/index.ts
 StandardOutput=journal
 StandardError=journal
 
