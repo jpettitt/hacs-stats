@@ -25,6 +25,9 @@
     "backfill:queue": "tsx --env-file-if-exists=.env scripts/backfill-queue.ts",
     "sweep:queue": "tsx --env-file-if-exists=.env scripts/sweep-queue.ts"
   },
+  "dependencies": {
+    "@hacs-stats/db": "workspace:*"
+  },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^22.10.5",
