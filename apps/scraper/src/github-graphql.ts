@@ -2,6 +2,54 @@ import type { RateLimitGuard } from './rate-limit.js';
 
 const ENDPOINT = 'https://api.github.com/graphql';
 const USER_AGENT = 'hacs-stats/0.0.0 (+https://hacs-stats.dev)';
+
+/** Default sleep when GitHub returns a secondary rate-limit response with
+ * no Retry-After header. Secondary limits typically clear in 60s. */
+const SECONDARY_RETRY_DEFAULT_SLEEP_MS = 60_000;
+const SECONDARY_RETRY_MAX_ATTEMPTS = 4;
+
+/**
+ * GitHub's secondary rate limits (distinct from the per-hour quota) hit
+ * for burst-y traffic and return HTTP 403 or 429 with a message body
+ * mentioning "secondary rate limit". The right response per their docs
+ * is to honour Retry-After and try again. Without this wrapper one
+ * secondary trip kills the whole scrape, which is exactly the failure
+ * mode that landed us here on the first VPS scrape.
+ */
+async function postWithSecondaryLimitRetry(
+  fetchImpl: typeof fetch,
+  token: string,
+  query: string,
+): Promise<Response> {
+  for (let attempt = 1; attempt <= SECONDARY_RETRY_MAX_ATTEMPTS; attempt++) {
+    const res = await fetchImpl(ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'User-Agent': USER_AGENT,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query }),
+    });
+    if (res.status !== 403 && res.status !== 429) return res;
+    // Peek at the body without consuming the original response — clone
+    // first so the caller still gets a readable stream if this turns out
+    // not to be a secondary-limit response.
+    const peek = await res.clone().text();
+    if (!/secondary rate limit/i.test(peek)) return res;
+    if (attempt === SECONDARY_RETRY_MAX_ATTEMPTS) return res;
+    const retryAfterHeader = res.headers.get('retry-after');
+    const retryAfterMs = retryAfterHeader
+      ? Math.max(1, Number(retryAfterHeader)) * 1000
+      : SECONDARY_RETRY_DEFAULT_SLEEP_MS;
+    console.warn(
+      `[graphql] secondary rate limit (attempt ${attempt}/${SECONDARY_RETRY_MAX_ATTEMPTS}) — sleeping ${retryAfterMs}ms`,
+    );
+    await new Promise((r) => setTimeout(r, retryAfterMs));
+  }
+  // Unreachable — the loop above always returns or sleeps + continues.
+  throw new Error('postWithSecondaryLimitRetry: exhausted retries');
+}
 /**
  * Batch size: 100 repos per query.
  *
@@ -83,15 +131,7 @@ async function fetchOneBatch(
     }
   `;
 
-  const res = await fetchImpl(ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${opts.token}`,
-      'User-Agent': USER_AGENT,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query }),
-  });
+  const res = await postWithSecondaryLimitRetry(fetchImpl, opts.token, query);
 
   if (!res.ok) {
     const body = await res.text();
