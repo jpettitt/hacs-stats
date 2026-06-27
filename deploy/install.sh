@@ -91,9 +91,13 @@ EOF
 
 install_app_files() {
   step "Installing systemd units and Caddyfile"
-  install -m 0644 "$REPO_ROOT/deploy/systemd/hacs-stats-web.service"    /etc/systemd/system/
-  install -m 0644 "$REPO_ROOT/deploy/systemd/hacs-stats-scrape.service" /etc/systemd/system/
-  install -m 0644 "$REPO_ROOT/deploy/systemd/hacs-stats-scrape.timer"   /etc/systemd/system/
+  install -m 0644 "$REPO_ROOT/deploy/systemd/hacs-stats-web.service"      /etc/systemd/system/
+  install -m 0644 "$REPO_ROOT/deploy/systemd/hacs-stats-scrape.service"   /etc/systemd/system/
+  install -m 0644 "$REPO_ROOT/deploy/systemd/hacs-stats-scrape.timer"     /etc/systemd/system/
+  install -m 0644 "$REPO_ROOT/deploy/systemd/hacs-stats-discover.service" /etc/systemd/system/
+  install -m 0644 "$REPO_ROOT/deploy/systemd/hacs-stats-discover.timer"   /etc/systemd/system/
+  install -m 0644 "$REPO_ROOT/deploy/systemd/hacs-stats-sweep.service"    /etc/systemd/system/
+  install -m 0644 "$REPO_ROOT/deploy/systemd/hacs-stats-sweep.timer"      /etc/systemd/system/
 
   if [[ ! -f /etc/caddy/Caddyfile.hacs-stats ]]; then
     install -m 0644 "$REPO_ROOT/deploy/Caddyfile" /etc/caddy/Caddyfile.hacs-stats
@@ -131,6 +135,8 @@ Next steps (manual):
   3. Enable services:
        systemctl enable --now hacs-stats-web.service
        systemctl enable --now hacs-stats-scrape.timer
+       systemctl enable --now hacs-stats-discover.timer
+       systemctl enable --now hacs-stats-sweep.timer
        systemctl reload caddy
 
   4. Trigger an initial scrape (don't wait until 04:00 UTC):

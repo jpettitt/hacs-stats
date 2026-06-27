@@ -1,0 +1,31 @@
+[Unit]
+Description=hacs-stats — weekly queue re-evaluation (promote / auto-reject / refresh pending rows)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hacs-stats
+Group=hacs-stats
+WorkingDirectory=/opt/hacs-stats
+EnvironmentFile=/etc/hacs-stats/env
+# scripts/sweep-queue.ts walks every status='pending' discovery_queue row,
+# re-fetches stars/pushed_at/description from GitHub, and applies the same
+# rules as live discovery: promote on threshold, reject on stale,
+# reject on 0 stars. User submissions are spared from the stale + 0-star
+# auto-rejects.
+ExecStart=/usr/bin/node --import tsx scripts/sweep-queue.ts
+StandardOutput=journal
+StandardError=journal
+
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hacs-stats
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true

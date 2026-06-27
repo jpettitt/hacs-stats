@@ -1,0 +1,14 @@
+[Unit]
+Description=Weekly hacs-stats discovery_queue re-evaluation sweep
+
+[Timer]
+# Wednesdays 03:00 UTC — offset from discovery (Sun 02:00) and the daily
+# scrape (04:00 UTC). The sweep walks ~5k pending rows at ~150ms each,
+# ~12 min wall-clock, well clear of every other job.
+OnCalendar=Wed *-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=5min
+Unit=hacs-stats-sweep.service
+
+[Install]
+WantedBy=timers.target

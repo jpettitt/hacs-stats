@@ -201,11 +201,52 @@ sudo systemctl restart hacs-stats-web.service
 The scrape job picks up the new code on its next timer fire — no restart
 needed; it's one-shot.
 
-## Manual scrape
+## Background jobs
+
+Three systemd timers run on different cadences:
+
+| Timer | When | What |
+| --- | --- | --- |
+| `hacs-stats-scrape.timer` | Daily 04:00 UTC | Refresh stars / downloads / release metadata for every catalogue entry. ~5–10 min. |
+| `hacs-stats-discover.timer` | Sundays 02:00 UTC | One-pass GitHub code-search for new `hacs.json` repos. Auto-approves clear cases, queues the rest for `/admin/queue`. ~2 min. |
+| `hacs-stats-sweep.timer` | Wednesdays 03:00 UTC | Walks every `status='pending'` queue row, re-fetches stars / pushed_at, applies the same promote / auto-reject rules as live discovery. ~12 min. |
+
+Enable them all at install time:
+
+```sh
+sudo systemctl enable --now hacs-stats-scrape.timer
+sudo systemctl enable --now hacs-stats-discover.timer
+sudo systemctl enable --now hacs-stats-sweep.timer
+```
+
+Inspect:
+
+```sh
+systemctl list-timers 'hacs-stats-*'
+journalctl -u hacs-stats-discover.service --since '1 day ago'
+```
+
+### Manual fire (don't wait for the timer)
 
 ```sh
 sudo systemctl start hacs-stats-scrape.service
-journalctl -u hacs-stats-scrape.service -f
+sudo systemctl start hacs-stats-discover.service
+sudo systemctl start hacs-stats-sweep.service
+journalctl -u hacs-stats-<which>.service -f
+```
+
+### `pnpm discover:bands` (still manual)
+
+The full 15-band size sweep that breaks past GitHub's 1000-result
+code-search cap isn't on a timer — it's a heavier one-off when you want
+deeper coverage. Run manually:
+
+```sh
+sudo -u hacs-stats bash -c '
+  set -a; source /etc/hacs-stats/env; set +a
+  cd /opt/hacs-stats
+  pnpm discover:bands
+'
 ```
 
 ## Backups

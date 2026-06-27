@@ -1,0 +1,16 @@
+[Unit]
+Description=Weekly hacs-stats discovery sweep
+
+[Timer]
+# Sundays 02:00 UTC — out of band with the daily scrape (04:00 UTC) so
+# the two don't race on GitHub rate limits or the SQLite writer.
+OnCalendar=Sun *-*-* 02:00:00
+# Catch up if the host was offline at the scheduled fire (e.g. reboot).
+Persistent=true
+# Stagger by up to 5 min so multiple VPSes running the same code don't
+# all fire to GitHub at exactly the same second.
+RandomizedDelaySec=5min
+Unit=hacs-stats-discover.service
+
+[Install]
+WantedBy=timers.target
