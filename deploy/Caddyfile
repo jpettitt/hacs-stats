@@ -17,12 +17,15 @@ hacs-stats.dev {
 	encode zstd gzip
 
 	# Reverse proxy to the Node app on localhost. The Node process never binds
-	# to a public interface.
-	reverse_proxy 127.0.0.1:3000
-
-	# Trust Cloudflare's forwarded-for header so logs show the real client IP.
-	# CF publishes its IP ranges at https://www.cloudflare.com/ips/.
-	header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+	# to a public interface. header_up MUST live inside reverse_proxy — at
+	# the site-block level it's a parse error and Caddy silently falls back
+	# to the default welcome page on the rest of the host.
+	reverse_proxy 127.0.0.1:3000 {
+		# Hand the real client IP through to the app for logs / rate limits.
+		# CF puts it in CF-Connecting-IP; we forward as X-Real-IP since
+		# that's the conventional name downstream code looks for.
+		header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+	}
 
 	log {
 		output file /var/log/caddy/hacs-stats.log

@@ -60,11 +60,28 @@ create_user_and_dirs() {
   if [[ ! -f "$ETC_DIR/env" ]]; then
     cat > "$ETC_DIR/env" <<'EOF'
 # /etc/hacs-stats/env — loaded by systemd via EnvironmentFile.
-# Fill in your GitHub PAT (public_repo scope) and tweak as needed.
+# See deploy/README.md "Storing secrets" for the full reference.
+
+# REQUIRED. GitHub PAT (classic). No scopes needed — any authenticated
+# token gets the 5000/hr REST + GraphQL quota we depend on.
 GITHUB_TOKEN=
+
 DATABASE_PATH=/var/lib/hacs-stats/hacs-stats.db
 PORT=3000
 NODE_ENV=production
+
+# REQUIRED for the admin queue at /admin/queue. Generate the password
+# with:  openssl rand -base64 24
+ADMIN_USER=admin
+ADMIN_PASS=
+
+# Optional auto-approve thresholds. Defaults live in the source; only set
+# these if you want different policy than the defaults documented in
+# scripts/discover.ts.
+# AUTOAPPROVE_MIN_STARS=50
+# AUTOAPPROVE_KNOWN_OWNER_MIN_STARS=5
+# AUTOAPPROVE_MAX_AGE_MONTHS=6
+# AUTOAPPROVE_OFF=1
 EOF
     chmod 0640 "$ETC_DIR/env"
     chgrp "$SERVICE_USER" "$ETC_DIR/env"
