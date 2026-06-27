@@ -46,6 +46,72 @@ export function enqueueDiscovery(db: Db, input: EnqueueInput): boolean {
   return res.changes > 0;
 }
 
+export type SubmissionOutcome =
+  | 'inserted' // brand-new row, awaiting review
+  | 'promoted' // existing code_search row upgraded to user_submission
+  | 'already-pending' // already a user_submission pending row (idempotent)
+  | 'already-accepted' // already in the catalogue
+  | 'already-rejected'; // admin (or auto-rule) said no — don't resurface
+
+/**
+ * Record a /submit POST. Differs from enqueueDiscovery in that a user
+ * submitting a repo that ALREADY exists in the queue from code_search
+ * promotes the row to source='user_submission' (with a note appended)
+ * so the admin sees a human vouched for it — easy to find for review.
+ *
+ * Returns the outcome so the route handler can surface a useful flash
+ * message rather than "thanks!" for cases where nothing actually happened.
+ */
+export function recordUserSubmission(
+  db: Db,
+  input: Omit<EnqueueInput, 'source'>,
+): SubmissionOutcome {
+  const existing = db.raw
+    .prepare<[string], { status: DiscoveryStatus; source: DiscoverySource }>(
+      'SELECT status, source FROM discovery_queue WHERE url = ?',
+    )
+    .get(input.url);
+
+  if (!existing) {
+    enqueueDiscovery(db, { ...input, source: 'user_submission' });
+    return 'inserted';
+  }
+
+  if (existing.status === 'accepted') return 'already-accepted';
+  if (existing.status === 'rejected') return 'already-rejected';
+
+  // status === 'pending' (or 'error' — treat the same: a human vouch should
+  // re-surface it for review). Promote source when it was code_search; if
+  // it's already a user_submission, just refresh the fetched metadata.
+  if (existing.source === 'user_submission') {
+    db.raw
+      .prepare(
+        'UPDATE discovery_queue SET stars = COALESCE(?, stars), pushed_at = COALESCE(?, pushed_at), description = COALESCE(?, description) WHERE url = ?',
+      )
+      .run(input.stars ?? null, input.pushedAt ?? null, input.description ?? null, input.url);
+    return 'already-pending';
+  }
+
+  db.raw
+    .prepare(
+      `UPDATE discovery_queue
+       SET source = 'user_submission',
+           notes  = COALESCE(notes, '') || '; promoted by user submission' || COALESCE(' (' || ? || ')', ''),
+           stars  = COALESCE(?, stars),
+           pushed_at = COALESCE(?, pushed_at),
+           description = COALESCE(?, description)
+       WHERE url = ?`,
+    )
+    .run(
+      input.notes ?? null,
+      input.stars ?? null,
+      input.pushedAt ?? null,
+      input.description ?? null,
+      input.url,
+    );
+  return 'promoted';
+}
+
 /** Sort options exposed by the admin queue UI. NULLs are pushed to the end
  * in both directions so pre-migration rows don't dominate the top of any
  * sort (their stars/pushed_at are unknown, not zero / forever-ago). */

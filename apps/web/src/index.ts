@@ -345,16 +345,42 @@ app.post('/submit', async (c) => {
   }
   const url = `https://github.com/${repoRaw}`;
   const notes = `kind=${kindRaw}${result.notes ? `; ${result.notes}` : ''}`;
-  discoveryQueue.enqueueDiscovery(rwDb, { url, source: 'user_submission', notes });
+  // Use recordUserSubmission instead of enqueueDiscovery — when the URL
+  // is already in the queue from auto-discovery, this promotes the row's
+  // source to user_submission so it surfaces ahead of unvouched
+  // candidates in admin review. Also surfaces "already accepted /
+  // rejected" outcomes back to the submitter as useful feedback rather
+  // than the misleading "thanks, queued!" we used to always show.
+  const outcome = discoveryQueue.recordUserSubmission(rwDb, { url, notes });
+  const flash =
+    outcome === 'already-accepted'
+      ? {
+          kind: 'ok' as const,
+          text: `Good news — ${repoRaw} is already in the catalogue. See /r/${repoRaw}.`,
+        }
+      : outcome === 'already-rejected'
+        ? {
+            kind: 'err' as const,
+            text: `${repoRaw} was previously rejected (manual or automatic). If you think that's wrong, open an issue against hacs-stats.`,
+          }
+        : outcome === 'promoted'
+          ? {
+              kind: 'ok' as const,
+              text: `Thanks — ${repoRaw} was already in the discovery queue; your submission promotes it for priority review.`,
+            }
+          : outcome === 'already-pending'
+            ? {
+                kind: 'ok' as const,
+                text: `${repoRaw} is already queued for review — your submission is on file.`,
+              }
+            : {
+                kind: 'ok' as const,
+                text: `Thanks — ${repoRaw} is queued for review and should appear in the catalogue after the next scrape if accepted.`,
+              };
   return c.html(
     renderLayout({
       title: 'Submission received — hacs-stats',
-      body: renderSubmitPage({
-        message: {
-          kind: 'ok',
-          text: `Thanks — ${repoRaw} is queued for review and should appear in the catalogue after the next scrape if accepted.`,
-        },
-      }),
+      body: renderSubmitPage({ message: flash }),
     }),
   );
 });
