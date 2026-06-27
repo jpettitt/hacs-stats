@@ -36,8 +36,12 @@ hacs-stats.dev {
 		header_up X-Real-IP {http.request.header.CF-Connecting-IP}
 	}
 
+	# Log via systemd's journal — `journalctl -u caddy -f` is the live tail.
+	# Avoids the perms dance of having Caddy create files under /var/log
+	# (it runs as the `caddy` user, which needs explicit ownership of any
+	# directory it writes to). JSON format keeps the structure for jq.
 	log {
-		output file /var/log/caddy/hacs-stats.log
+		output stderr
 		format json
 	}
 }
