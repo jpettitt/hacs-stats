@@ -225,8 +225,20 @@ export async function* fetchRepoMetadataBatches(
   opts: FetchOptions,
 ): AsyncGenerator<RepoMetadata[]> {
   const size = opts.batchSize ?? DEFAULT_BATCH_SIZE;
+  // Inter-batch throttle. Empirically, firing 39 back-to-back GraphQL
+  // batches at ~2-5/sec from a single IP trips GitHub's secondary rate
+  // limit ~4 times per scrape; each trip costs 60s. Sleeping ~750ms
+  // between batches paces us to ~1.3 batches/sec — well under the
+  // secondary threshold — and finishes the whole step faster than
+  // hitting + recovering. Override via GRAPHQL_BATCH_DELAY_MS to tune.
+  const interBatchSleepMs = Number(process.env.GRAPHQL_BATCH_DELAY_MS ?? 750);
+  let first = true;
   for (let i = 0; i < identifiers.length; i += size) {
     if (opts.guard) await opts.guard.waitIfNeeded();
+    if (!first && interBatchSleepMs > 0) {
+      await new Promise((r) => setTimeout(r, interBatchSleepMs));
+    }
+    first = false;
     const slice = identifiers.slice(i, i + size);
     yield await fetchOneBatch(slice, opts);
   }
