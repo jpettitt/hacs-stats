@@ -26,6 +26,7 @@ export interface Repo {
   description: string | null;
   archived: number;
   is_fork: number;
+  parent_full_name: string | null;
   default_branch: string | null;
   first_seen_at: string;
   last_scraped_at: string | null;

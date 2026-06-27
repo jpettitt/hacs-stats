@@ -221,14 +221,136 @@ section > h2 { margin-bottom: .75rem; }
   vertical-align: middle;
   border: 1px solid transparent;
 }
+/* HACS badge: solid blue fill so the "officially listed" status is the
+   most prominent provenance signal — defaults are the highest-trust
+   bucket and a hollow outline made them disappear next to discovered. */
+.tag-hacs       { background: #1e40af; color: white; border-color: #1e40af; }
+/* Kind badge: muted neutral so it doesn't compete with the HACS / source
+   tag visually — it's reference info, not provenance. */
+.tag-kind       { color: var(--text-muted); border-color: var(--border); background: var(--bg); }
 .tag-discovered { color: var(--accent); border-color: var(--accent); }
 .tag-submitted  { color: #047857; border-color: #047857; }
 .tag-fork       { color: #92400e; border-color: #92400e; }
 .tag-archived   { color: var(--text-dimmer); border-color: var(--text-dimmer); }
-@media (prefers-color-scheme: dark) {
-  .tag-submitted { color: #34d399; border-color: #34d399; }
-  .tag-fork      { color: #fbbf24; border-color: #fbbf24; }
+/* Unmaintained: amber outline — louder than 'fork' / 'archived' (which
+   could just mean "I moved the project") because it's a real safety
+   signal about install-now-bugs-later risk. */
+.tag-unmaintained { color: #b45309; border-color: #b45309; }
+/* Tooltips: each badge with a data-tip is focusable (tabindex=0) and
+   shows the tooltip on hover / keyboard focus / tap-focus. Native
+   title="..." was too slow on desktop and invisible on mobile — this CSS
+   bubble is immediate on hover and survives a tap on touch devices
+   because the span is focusable. */
+.tag[data-tip]  { cursor: help; position: relative; outline: none; }
+.tag[data-tip]:hover::after,
+.tag[data-tip]:focus::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 0;
+  top: calc(100% + .35rem);
+  z-index: 100;
+  display: block;
+  padding: .55rem .75rem;
+  width: max-content;
+  max-width: 22rem;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: .35rem;
+  box-shadow: 0 8px 20px rgba(0,0,0,.18);
+  font-size: .8rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.4;
+  white-space: normal;
+  pointer-events: none;
 }
+/* Tap-anywhere-else to dismiss is automatic: tapping outside the focused
+   span removes focus, hiding the bubble. */
+/* Pending = solid fill in the accent colour, NOT a muted outline — this is
+   the most important context ("the numbers next to me aren't real yet")
+   and should be impossible to miss. */
+.tag-pending    { background: var(--accent); color: white; border-color: var(--accent); }
+@media (prefers-color-scheme: dark) {
+  .tag-hacs        { background: #3b82f6; border-color: #3b82f6; }
+  .tag-submitted   { color: #34d399; border-color: #34d399; }
+  .tag-fork        { color: #fbbf24; border-color: #fbbf24; }
+  .tag-unmaintained{ color: #f59e0b; border-color: #f59e0b; }
+  .tag-pending     { color: #0f172a; }
+}
+
+/* ---------- admin queue: related projects block --------------------- */
+.related {
+  margin-top: .35rem;
+  padding: .35rem .55rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: .35rem;
+  line-height: 1.5;
+}
+.related a { color: var(--accent); text-decoration: none; }
+.related a:hover { text-decoration: underline; }
+
+/* ---------- repo detail: 'other repos from this owner' ------------- */
+.related-list {
+  margin: .5rem 0; padding-left: 1.25rem; columns: 2; column-gap: 2rem;
+}
+.related-list li { break-inside: avoid; margin-bottom: .15rem; }
+
+/* ---------- admin queue: status tabs ------------------------------- */
+.tabs {
+  display: flex; gap: .25rem; margin: 0.75rem 0 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  padding: .45rem .85rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: .35rem .35rem 0 0;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 500;
+}
+.tab:hover { color: var(--text); }
+.tab-active {
+  background: var(--bg-elev);
+  border-color: var(--border);
+  color: var(--text);
+  /* visually merge with the table below */
+  margin-bottom: -1px;
+  border-bottom: 1px solid var(--bg-elev);
+}
+
+/* ---------- sortable column headers (admin queue) ------------------ */
+th.sort-active { color: var(--accent); }
+th a { color: inherit; text-decoration: none; }
+th a:hover { text-decoration: underline; }
+
+/* ---------- home page "See all" links inside section headers ------- */
+.more-link {
+  margin-left: .75rem;
+  font-size: .85rem;
+  font-weight: 400;
+  color: var(--accent);
+  text-decoration: none;
+  vertical-align: middle;
+}
+.more-link:hover { text-decoration: underline; }
+
+/* ---------- lifecycle banners (pending / offline / removed) --------- */
+.banner {
+  margin: 1.25rem 0; padding: .85rem 1.1rem;
+  border-radius: .5rem;
+  border-left: 4px solid var(--accent);
+  background: var(--bg-elev);
+  display: flex; gap: .75rem; flex-wrap: wrap; align-items: baseline;
+}
+.banner strong { color: var(--text); }
+.banner span   { color: var(--text-muted); font-size: .95rem; flex: 1; min-width: 14rem; }
+.banner-info { border-left-color: var(--accent); }
+.banner-warn { border-left-color: var(--warn-text); }
+.banner-err  { border-left-color: var(--danger); }
 
 /* ---------- pagination ---------------------------------------------- */
 .pagination {
@@ -343,6 +465,22 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: now
 .desc-col { max-width: 32rem; }
 table { table-layout: auto; }
 
+/* Mobile: 5 columns (Repo / Description / Kind / secondary / Stars) don't
+   fit at phone widths and the parent's overflow:hidden clipped the right
+   half off. Drop the description, tighten padding, and let any remaining
+   overflow scroll horizontally rather than disappearing. */
+@media (max-width: 720px) {
+  .desc-col { display: none; }
+  th, td { padding: .4rem .55rem; font-size: .85rem; }
+  /* Make every table its own horizontal scroll container. display:block
+     loses table-cell sizing, so we restore it on the children — net
+     result: native table layout INSIDE, scrollable wrapper OUTSIDE. */
+  table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table > thead, table > tbody { display: table; width: 100%; }
+  table > thead > tr, table > tbody > tr { display: table-row; }
+  table th, table td { display: table-cell; }
+}
+
 /* ---------- repo name --------------------------------------------- */
 a.repo-name { text-decoration: none; color: var(--text); }
 a.repo-name:hover .repo-display { text-decoration: underline; }
@@ -388,6 +526,22 @@ function navLink(
   return `<a href="${href}" class="${active === key ? 'active' : ''}">${escapeHtml(label)}</a>`;
 }
 
+// Google Analytics 4. The inline script body is hashed into the CSP
+// (GTAG_INLINE_SHA256 in apps/web/src/index.ts) — any change to the
+// inline content here MUST be matched by a recomputed hash there or the
+// browser will silently refuse to run it. The leading and trailing
+// newlines are part of the hashed payload; do not "tidy" the whitespace.
+const GTAG = `
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-PG9GF2C20Q"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-PG9GF2C20Q');
+</script>
+`;
+
 export function renderLayout(props: LayoutProps): string {
   const heading = props.pageHeading ?? 'hacs-stats';
   const safeSearchVal = escapeHtml(props.searchValue ?? '');
@@ -398,6 +552,7 @@ export function renderLayout(props: LayoutProps): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(props.title)}</title>
   <style>${CSS}</style>
+  ${GTAG}
 </head>
 <body>
   <header class="topbar">
@@ -422,7 +577,9 @@ export function renderLayout(props: LayoutProps): string {
   <footer class="page">
     Data sourced from public GitHub APIs. Downloads are a proxy for installs;
     Home Assistant does not phone home. Not affiliated with HACS.
-    See the methodology on the <a href="/about">About</a> page.
+    See the methodology on the <a href="/about">About</a> page ·
+    <a href="/privacy">Privacy</a> ·
+    <a href="https://github.com/jpettitt/hacs-stats" target="_blank" rel="noopener noreferrer">Source (AGPL-3.0)</a>
   </footer>
 </body>
 </html>`;

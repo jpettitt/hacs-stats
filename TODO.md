@@ -8,7 +8,7 @@ Phased build plan. Each phase ends in something runnable.
 - [x] Write [README.md](./README.md), [ARCHITECTURE.md](./ARCHITECTURE.md), this file
 - [x] Decide on domain — **hacs-stats.dev** (primary), `.com` redirects
 - [x] Decide on relationship — independent / unofficial
-- [x] Decide on license — **closed source, Copyright John Pettitt** (no LICENSE file)
+- [x] Decide on license — **AGPL-3.0-or-later** (see [LICENSE](./LICENSE)). Network-use copyleft prevents proprietary forks of the dashboard.
 - [x] Decide on hosting — VPS + Cloudflare-as-CDN (replaces the earlier
       Cloudflare-Workers plan; CF kept only for edge TLS / CDN / DDoS)
 - [x] `git init`, first commit
@@ -129,12 +129,35 @@ home page renders 5 leaderboard sections in <100ms.
 
 ## Phase 6 — Discovery job
 
-- [ ] Weekly systemd timer: GitHub code search for `hacs.json`
-- [ ] Dedupe against `repos` and `discovery_queue`
-- [ ] Admin endpoint to accept/reject queue items (basic auth)
-- [ ] User submission form on the public site
+- [x] GitHub code search for `hacs.json` (`pnpm discover`)
+- [x] Dedupe against `repos` and `discovery_queue`
+- [x] Admin endpoint to accept/reject queue items (basic auth)
+- [x] User submission form on the public site
+- [x] Auto-approve: candidates with ≥50 stars and pushed within 6 months go
+      straight to `repos` (state='pending') with an audit row in the queue
+- [x] Trusted-owner discount: owners with a `source='default'` repo get the
+      auto-approve threshold dropped to 5 stars
+- [x] Banded size sweep (`pnpm discover:bands`) to break past GitHub's
+      1000-result code-search cap
+- [x] Admin queue UI: tabs (pending / accepted / rejected / errored),
+      description + stars + last-push columns, sortable headers, accepted
+      tab uses the same row format as other listing pages
+- [ ] Weekly systemd timer for `pnpm discover:bands`
+- [ ] Harden `discover-bands.ts` against transient ETIMEDOUTs (retry the
+      failing band rather than aborting the whole sweep)
 
-*Acceptance:* Discovery queue fills weekly; admin can promote items to `repos`.
+*Acceptance:* Discovery queue fills on-demand; auto-approve handles the
+high-confidence tail; admin can promote remaining items to `repos`.
+
+## Phase 6.5 — Repo lifecycle
+
+- [x] State machine: pending → active → offline → removed (30d failure floor)
+- [x] Redirect detection via GraphQL canonical `nameWithOwner` — renames or
+      dedupes the row when GitHub redirects (motivating live example:
+      `Makin-Things/weather-radar-card` → `jpettitt/weather-radar-card`)
+- [x] `/pending` and `/removed` pages
+- [x] Repo detail page surfaces lifecycle banners + "Other repos from {owner}"
+- [x] `/owner/:owner` portfolio page
 
 ## Phase 7 — Polish & ops
 

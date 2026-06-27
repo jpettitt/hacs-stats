@@ -13,7 +13,13 @@ const USER_AGENT = 'hacs-stats/0.0.0 (+https://hacs-stats.dev)';
 export const DEFAULT_BATCH_SIZE = 100;
 
 export interface RepoMetadata {
+  /** What we ASKED for ("owner/name" of the row being scraped). */
   fullName: string;
+  /** What GitHub canonically calls the repo. Differs from `fullName` when
+   * the repo has been moved/renamed and GitHub redirected — the caller uses
+   * this to detect duplicates and rename in place. Null when the lookup
+   * failed entirely (repo missing). */
+  canonicalFullName: string | null;
   /** null when the repo is missing (renamed, deleted, made private). */
   stars: number | null;
   forks: number | null;
@@ -22,6 +28,8 @@ export interface RepoMetadata {
   description: string | null;
   archived: boolean | null;
   isFork: boolean | null;
+  /** Parent repo "owner/name" for forks; null for non-forks (or when GitHub omits it). */
+  parentFullName: string | null;
   defaultBranch: string | null;
 }
 
@@ -71,6 +79,7 @@ async function fetchOneBatch(
       description
       isArchived
       isFork
+      parent { nameWithOwner }
     }
   `;
 
@@ -116,6 +125,7 @@ async function fetchOneBatch(
   return identifiers.map((id, i) => {
     const node = data[aliasFor(i)] as
       | {
+          nameWithOwner: string;
           stargazerCount: number;
           forkCount: number;
           issues: { totalCount: number };
@@ -126,6 +136,7 @@ async function fetchOneBatch(
           description: string | null;
           isArchived: boolean;
           isFork: boolean;
+          parent: { nameWithOwner: string } | null;
         }
       | null
       | undefined;
@@ -133,6 +144,7 @@ async function fetchOneBatch(
     if (!node) {
       return {
         fullName,
+        canonicalFullName: null,
         stars: null,
         forks: null,
         openIssues: null,
@@ -140,11 +152,15 @@ async function fetchOneBatch(
         description: null,
         archived: null,
         isFork: null,
+        parentFullName: null,
         defaultBranch: null,
       };
     }
     return {
       fullName,
+      // GraphQL returns the CANONICAL nameWithOwner — if the requested
+      // owner/name was redirected, this differs from `fullName`.
+      canonicalFullName: typeof node.nameWithOwner === 'string' ? node.nameWithOwner : null,
       stars: node.stargazerCount,
       forks: node.forkCount,
       openIssues: node.issues.totalCount,
@@ -152,6 +168,7 @@ async function fetchOneBatch(
       description: node.description,
       archived: node.isArchived,
       isFork: node.isFork,
+      parentFullName: node.parent?.nameWithOwner ?? null,
       defaultBranch: node.defaultBranchRef?.name ?? null,
     };
   });

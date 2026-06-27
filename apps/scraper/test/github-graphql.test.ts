@@ -22,6 +22,8 @@ describe('fetchOneBatch', () => {
             },
             description: 'desc',
             isArchived: false,
+            isFork: false,
+            parent: null,
           },
           r1: {
             nameWithOwner: 'c/d',
@@ -31,6 +33,8 @@ describe('fetchOneBatch', () => {
             defaultBranchRef: null,
             description: null,
             isArchived: true,
+            isFork: false,
+            parent: null,
           },
         },
       });
@@ -44,25 +48,58 @@ describe('fetchOneBatch', () => {
     expect(res).toEqual([
       {
         fullName: 'a/b',
+        canonicalFullName: 'a/b',
         stars: 10,
         forks: 2,
         openIssues: 3,
         lastCommitAt: '2026-06-20T12:00:00Z',
         description: 'desc',
         archived: false,
+        isFork: false,
+        parentFullName: null,
         defaultBranch: 'main',
       },
       {
         fullName: 'c/d',
+        canonicalFullName: 'c/d',
         stars: 0,
         forks: 0,
         openIssues: 0,
         lastCommitAt: null,
         description: null,
         archived: true,
+        isFork: false,
+        parentFullName: null,
         defaultBranch: null,
       },
     ]);
+  });
+
+  it('detects a redirect: when nameWithOwner differs from the request, canonical is the new name', async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            r0: {
+              nameWithOwner: 'NewOwner/new-name', // <-- moved on GitHub
+              stargazerCount: 5,
+              forkCount: 0,
+              issues: { totalCount: 0 },
+              defaultBranchRef: null,
+              description: null,
+              isArchived: false,
+              isFork: false,
+              parent: null,
+            },
+          },
+        }),
+      );
+    const res = await fetchOneBatch([{ owner: 'OldOwner', name: 'old-name' }], {
+      token: 'x',
+      fetchImpl,
+    });
+    expect(res[0]?.fullName).toBe('OldOwner/old-name');
+    expect(res[0]?.canonicalFullName).toBe('NewOwner/new-name');
   });
 
   it('tolerates NOT_FOUND aliases — they come back with null fields', async () => {

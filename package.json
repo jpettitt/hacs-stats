@@ -4,7 +4,7 @@
   "private": true,
   "description": "Unofficial usage stats for HACS — Home Assistant Community Store.",
   "author": "John Pettitt",
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@11.3.0",
   "engines": {
     "node": ">=22"
@@ -20,7 +20,10 @@
     "dev:scraper": "pnpm --filter @hacs-stats/scraper dev",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
-    "discover": "tsx --env-file-if-exists=.env scripts/discover.ts"
+    "discover": "tsx --env-file-if-exists=.env scripts/discover.ts",
+    "discover:bands": "tsx --env-file-if-exists=.env scripts/discover-bands.ts",
+    "backfill:queue": "tsx --env-file-if-exists=.env scripts/backfill-queue.ts",
+    "sweep:queue": "tsx --env-file-if-exists=.env scripts/sweep-queue.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

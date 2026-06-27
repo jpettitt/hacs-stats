@@ -150,6 +150,11 @@ async function ingest(): Promise<IngestResult> {
     let batchesFetched = 0;
     let snapshotsWritten = 0;
     let missing = 0;
+    let purged = 0;
+    let renamed = 0;
+    let dedupedRedirects = 0;
+    let movedToOffline = 0;
+    let movedToRemoved = 0;
     const fullNameToId = new Map(allRepos.map((r) => [r.full_name, r.id]));
     const idents = allRepos.map((r) => ({ owner: r.owner, name: r.name }));
 
@@ -157,17 +162,53 @@ async function ingest(): Promise<IngestResult> {
       batchesFetched++;
       const writeBatch = db.raw.transaction((items: typeof batch) => {
         for (const m of items) {
-          if (m.stars === null) {
-            missing++;
-            continue;
-          }
           const repoId = fullNameToId.get(m.fullName);
           if (repoId === undefined) continue;
-          // Two separate writes per repo:
-          //   - snapshot row (fast-moving: stars/forks/issues + last commit)
-          //   - repo row (slow-moving: description / archived / default_branch)
-          // The slow-moving fields are properties of the repo, not a daily
-          // measurement, so they live on `repos`, not on every snapshot.
+
+          // --- Failure path: GraphQL returned no data for this alias ---
+          // Advance the lifecycle state machine: pending→delete (after one
+          // retry), active→offline, offline→(maybe)removed.
+          if (m.stars === null) {
+            missing++;
+            const outcome = repos.markRepoFailure(db, repoId);
+            if (outcome.action === 'deleted') purged++;
+            else if (outcome.newState === 'offline') movedToOffline++;
+            else if (outcome.newState === 'removed') movedToRemoved++;
+            continue;
+          }
+
+          // --- Redirect path: canonical name differs from request ---
+          // GitHub silently follows owner/name renames; nameWithOwner in
+          // the response is the new canonical. If we already have the
+          // canonical name as a separate row, the OLD row is a duplicate
+          // and gets deleted; otherwise we rename the row in place
+          // (preserving id + history). weather-radar-card was the
+          // motivating live example.
+          if (m.canonicalFullName && m.canonicalFullName !== m.fullName) {
+            const rename = repos.renameRepo(db, repoId, m.canonicalFullName);
+            if (rename.ok) {
+              renamed++;
+              // Update the local map so further references to the old
+              // name in this run resolve to the renamed row.
+              fullNameToId.delete(m.fullName);
+              fullNameToId.set(m.canonicalFullName, repoId);
+            } else if (rename.reason === 'duplicate') {
+              // Canonical name already exists as another row — old row is
+              // the duplicate, blow it away (along with its child rows).
+              repos.deleteRepoCascade(db, repoId);
+              fullNameToId.delete(m.fullName);
+              dedupedRedirects++;
+              continue;
+            } else {
+              // Malformed canonical (extremely unlikely from GraphQL but
+              // defensive). Treat as failure.
+              missing++;
+              repos.markRepoFailure(db, repoId);
+              continue;
+            }
+          }
+
+          // --- Success path: write snapshot + metadata + advance state ---
           snapshots.upsertRepoSnapshot(db, {
             repoId,
             snapshotDate: today,
@@ -181,15 +222,21 @@ async function ingest(): Promise<IngestResult> {
             description: m.description,
             archived: m.archived ?? false,
             isFork: m.isFork ?? false,
+            parentFullName: m.parentFullName,
             defaultBranch: m.defaultBranch,
           });
+          repos.markRepoSuccess(db, repoId);
           snapshotsWritten++;
         }
       });
       writeBatch(batch);
     }
     metadata = { batchesFetched, snapshotsWritten, missing };
-    console.log(`[scrape]   ${snapshotsWritten} snapshots written, ${missing} repos missing`);
+    console.log(
+      `[scrape]   ${snapshotsWritten} snapshots written, ${missing} repos missing, ` +
+        `${purged} pending-fail purged, ${movedToOffline}→offline, ${movedToRemoved}→removed, ` +
+        `${renamed} renamed via redirect, ${dedupedRedirects} duplicates deduped`,
+    );
 
     // --- Phase 3 step B: REST releases → releases + release_asset_snapshots -
     console.log(

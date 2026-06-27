@@ -6,8 +6,11 @@ import { Hono } from 'hono';
 import { renderLayout } from './layout.js';
 import { renderAboutPage } from './pages/about.js';
 import { renderAdminPage } from './pages/admin.js';
-import { renderCategoriesIndex, renderCategoryPage } from './pages/category.js';
+import { renderCategoriesIndex } from './pages/category.js';
 import { renderHome } from './pages/home.js';
+import { renderPendingPage, renderRemovedPage } from './pages/lifecycle.js';
+import { renderOwnerPage } from './pages/owner.js';
+import { renderPrivacyPage } from './pages/privacy.js';
 import { renderRepoDetail } from './pages/repo.js';
 import { renderSearchPage } from './pages/search.js';
 import { renderSubmitPage } from './pages/submit.js';
@@ -36,16 +39,26 @@ const app = new Hono();
 // Defence-in-depth: even if a sanitisation bug ever lets a `<script>` slip
 // into rendered HTML, this CSP prevents the browser from executing it.
 // - default-src 'self'      — disallow off-domain scripts, fonts, iframes, etc.
+// - script-src — allow self + Google Tag Manager (the gtag loader lives at
+//   googletagmanager.com) + a single SHA-256 hash for the inline gtag-
+//   config snippet in layout.ts. The hash binds to the EXACT bytes in
+//   GTAG_INLINE; change either side and the script silently stops
+//   executing (analytics breaks, page still renders). Recompute with:
+//     printf '%s' "<inline script body>" | openssl dgst -sha256 -binary | openssl base64
+// - connect-src — gtag posts beacons to *.google-analytics.com etc.
+// - img-src 'self' data: — small inline icons + the GA pixel.
 // - style-src 'self' 'unsafe-inline' — page styles are inline today; tighten
 //   once we move to an external stylesheet
-// - img-src 'self' data: — small inline icons allowed
 // - object-src 'none' — no <object>/<embed> plugins
 // - base-uri 'none' — block <base> tag URL hijacks
 // - frame-ancestors 'none' — clickjacking protection
+const GTAG_INLINE_SHA256 = 'sha256-oMZayXzesR1hateqaVS8Wx5q7j/dmUGohqU6xQnCkHA=';
 const CSP = [
   "default-src 'self'",
+  `script-src 'self' https://www.googletagmanager.com '${GTAG_INLINE_SHA256}'`,
+  "connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com",
+  "img-src 'self' data: https://*.google-analytics.com https://*.googletagmanager.com",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
   "object-src 'none'",
   "base-uri 'none'",
   "frame-ancestors 'none'",
@@ -84,6 +97,11 @@ app.get('/categories', (c) => {
   return c.html(renderLayout({ title: 'Categories — hacs-stats', navActive: 'categories', body }));
 });
 
+// /category/:kind is now an alias for /search?kind=…&sort=stars. There's
+// only one listing render path (the search page) so the category view
+// stays consistent with every other "show me a filtered list" entry
+// point. 302 (not 301) keeps bookmarks pointing at the alias if we ever
+// want to revive a dedicated category renderer.
 app.get('/category/:kind', (c) => {
   const kind = c.req.param('kind');
   if (!isRepoKind(kind)) {
@@ -96,21 +114,31 @@ app.get('/category/:kind', (c) => {
       404,
     );
   }
-  const page = parsePage(c.req.query('page'));
-  const pageData = leaders.topByCategory(
-    db,
-    kind,
-    CATEGORY_PAGE_SIZE,
-    (page - 1) * CATEGORY_PAGE_SIZE,
+  return c.redirect(`/search?kind=${encodeURIComponent(kind)}&sort=stars`, 302);
+});
+
+app.get('/owner/:owner', (c) => {
+  const owner = c.req.param('owner');
+  // Same allow-list as repo names: GitHub usernames/orgs are alnum + - / _
+  // / dot. We're stricter than GitHub's actual rules (which permit unicode)
+  // because the URL space is ours to constrain — any owner we'd catalogue
+  // must have a valid GitHub handle anyway.
+  if (!/^[A-Za-z0-9._-]{1,39}$/.test(owner)) {
+    return c.html(
+      renderLayout({
+        title: 'Invalid owner — hacs-stats',
+        body: `<p>That doesn't look like a valid GitHub owner.</p>`,
+      }),
+      400,
+    );
+  }
+  const ownerRepos = leaders.reposByOwner(db, owner, 200);
+  return c.html(
+    renderLayout({
+      title: `${owner} — hacs-stats`,
+      body: renderOwnerPage({ owner, repos: ownerRepos }),
+    }),
   );
-  const body = renderCategoryPage({
-    kind,
-    rows: pageData.rows,
-    page,
-    pageSize: CATEGORY_PAGE_SIZE,
-    total: pageData.total,
-  });
-  return c.html(renderLayout({ title: `${kind} — hacs-stats`, navActive: 'categories', body }));
 });
 
 app.get('/r/:owner/:name', (c) => {
@@ -143,13 +171,17 @@ app.get('/r/:owner/:name', (c) => {
     .repoStarsTimeseries(db, detail.id, 30)
     .map((p) => ({ date: p.date, value: p.stars }));
   const releaseRows = leaders.releaseDownloadsForRepo(db, detail.id, 25);
+  const relatedRepos = repos.listRepoIdentsByOwner(db, owner, fullName);
   const body = renderRepoDetail({
     detail: {
       full_name: detail.full_name,
       hacs_name: detail.hacs_name,
       kind: detail.kind,
       source: detail.source,
+      state: detail.state,
+      first_failure_at: detail.first_failure_at,
       is_fork: detail.is_fork,
+      parent_full_name: detail.parent_full_name,
       description: detail.description,
       archived: detail.archived,
       hacs_filename: detail.hacs_filename,
@@ -170,6 +202,7 @@ app.get('/r/:owner/:name', (c) => {
     },
     starsSeries,
     releases: releaseRows,
+    relatedRepos,
   });
   const title = detail.hacs_name
     ? `${detail.hacs_name} (${fullName}) — hacs-stats`
@@ -178,7 +211,7 @@ app.get('/r/:owner/:name', (c) => {
 });
 
 const SEARCH_PAGE_SIZE = 50;
-const CATEGORY_PAGE_SIZE = 50;
+const QUEUE_PAGE_SIZE = 50;
 
 function parsePage(raw: string | undefined): number {
   const n = Number(raw);
@@ -200,19 +233,18 @@ app.get('/search', (c) => {
   const kind = isRepoKind(kindRaw) ? kindRaw : undefined;
   const page = parsePage(c.req.query('page'));
 
-  // Run a query when the user gave us q, kind, or non-default sort. Empty-
-  // everything renders the bare filter bar (no point listing all 3.3k repos
-  // by default — that's what /categories is for).
-  const shouldQuery = q.length >= 2 || kind !== undefined;
-  const result = shouldQuery
-    ? leaders.searchRepos(db, {
-        q,
-        sort,
-        ...(kind !== undefined ? { kind } : {}),
-        limit: SEARCH_PAGE_SIZE,
-        offset: (page - 1) * SEARCH_PAGE_SIZE,
-      })
-    : { rows: [], total: 0 };
+  // Always run the query — /search is the single listing surface (home
+  // sections, category cards, and direct visits all land here). An empty
+  // q + no kind + default sort means "show everything sorted by name",
+  // which is what the home page's "See all" links lean on. Pagination
+  // keeps this from being a 7000-row firehose.
+  const result = leaders.searchRepos(db, {
+    q,
+    sort,
+    ...(kind !== undefined ? { kind } : {}),
+    limit: SEARCH_PAGE_SIZE,
+    offset: (page - 1) * SEARCH_PAGE_SIZE,
+  });
 
   const body = renderSearchPage({
     query: q,
@@ -238,10 +270,34 @@ app.get('/search', (c) => {
   );
 });
 
+app.get('/pending', (c) => {
+  const rows = leaders.pendingRepos(db, 200);
+  return c.html(
+    renderLayout({
+      title: 'Pending repos — hacs-stats',
+      body: renderPendingPage({ rows }),
+    }),
+  );
+});
+
+app.get('/removed', (c) => {
+  const rows = leaders.removedRepos(db, 200);
+  return c.html(
+    renderLayout({
+      title: 'Removed repos — hacs-stats',
+      body: renderRemovedPage({ rows }),
+    }),
+  );
+});
+
 app.get('/about', (c) =>
   c.html(
     renderLayout({ title: 'About — hacs-stats', navActive: 'about', body: renderAboutPage() }),
   ),
+);
+
+app.get('/privacy', (c) =>
+  c.html(renderLayout({ title: 'Privacy — hacs-stats', body: renderPrivacyPage() })),
 );
 
 // ---------------------------------------------------------------------------
@@ -265,6 +321,9 @@ const FAILURE_TEXT: Record<string, string> = {
   'malformed-hacs-json': 'Found a hacs.json, but it wouldn’t parse.',
   'not-meaningful':
     'The hacs.json is missing every HACS-meaningful field. Likely a false positive.',
+  suppressed: "That's a HACS platform repo, not a HACS module — we don't list it.",
+  stale:
+    "That repo hasn't had a push in 3+ years. We hide repos that abandoned to keep the catalogue useful.",
   'network-error': 'Couldn’t reach GitHub right now. Try again in a minute.',
 };
 
@@ -301,16 +360,42 @@ app.post('/submit', async (c) => {
   }
   const url = `https://github.com/${repoRaw}`;
   const notes = `kind=${kindRaw}${result.notes ? `; ${result.notes}` : ''}`;
-  discoveryQueue.enqueueDiscovery(rwDb, { url, source: 'user_submission', notes });
+  // Use recordUserSubmission instead of enqueueDiscovery — when the URL
+  // is already in the queue from auto-discovery, this promotes the row's
+  // source to user_submission so it surfaces ahead of unvouched
+  // candidates in admin review. Also surfaces "already accepted /
+  // rejected" outcomes back to the submitter as useful feedback rather
+  // than the misleading "thanks, queued!" we used to always show.
+  const outcome = discoveryQueue.recordUserSubmission(rwDb, { url, notes });
+  const flash =
+    outcome === 'already-accepted'
+      ? {
+          kind: 'ok' as const,
+          text: `Good news — ${repoRaw} is already in the catalogue. See /r/${repoRaw}.`,
+        }
+      : outcome === 'already-rejected'
+        ? {
+            kind: 'err' as const,
+            text: `${repoRaw} was previously rejected (manual or automatic). If you think that's wrong, open an issue against hacs-stats.`,
+          }
+        : outcome === 'promoted'
+          ? {
+              kind: 'ok' as const,
+              text: `Thanks — ${repoRaw} was already in the discovery queue; your submission promotes it for priority review.`,
+            }
+          : outcome === 'already-pending'
+            ? {
+                kind: 'ok' as const,
+                text: `${repoRaw} is already queued for review — your submission is on file.`,
+              }
+            : {
+                kind: 'ok' as const,
+                text: `Thanks — ${repoRaw} is queued for review and should appear in the catalogue after the next scrape if accepted.`,
+              };
   return c.html(
     renderLayout({
       title: 'Submission received — hacs-stats',
-      body: renderSubmitPage({
-        message: {
-          kind: 'ok',
-          text: `Thanks — ${repoRaw} is queued for review and should appear in the catalogue after the next scrape if accepted.`,
-        },
-      }),
+      body: renderSubmitPage({ message: flash }),
     }),
   );
 });
@@ -352,16 +437,69 @@ app.get('/admin/queue', (c) => {
     if (gate.status === 503) return c.text('admin endpoint not configured', 503);
     return adminChallenge();
   }
-  const pending = discoveryQueue.listQueueByStatus(db, 'pending', 200);
+  // Status filter — defaults to 'pending' so the admin's daily workflow
+  // hasn't changed; explicit ?status=accepted/rejected/error surface the
+  // audit trail (e.g. which rows did the band-discovery run auto-approve).
+  const rawStatus = c.req.query('status') ?? 'pending';
+  const status: 'pending' | 'accepted' | 'rejected' | 'error' =
+    rawStatus === 'accepted' || rawStatus === 'rejected' || rawStatus === 'error'
+      ? rawStatus
+      : 'pending';
+  const rawSort = c.req.query('sort') ?? 'discovered';
+  const sort: 'discovered' | 'stars' | 'pushed' =
+    rawSort === 'stars' || rawSort === 'pushed' ? rawSort : 'discovered';
+  const dir: 'asc' | 'desc' = c.req.query('dir') === 'asc' ? 'asc' : 'desc';
+  const page = parsePage(c.req.query('page'));
   const totals = discoveryQueue.countQueueByStatus(db);
+  const pending = discoveryQueue.listQueueByStatus(
+    db,
+    status,
+    QUEUE_PAGE_SIZE,
+    sort,
+    dir,
+    (page - 1) * QUEUE_PAGE_SIZE,
+  );
   const msg = c.req.query('msg');
+  // Enrich each queue item with "related projects" — other repos in our
+  // catalogue owned by the same GitHub owner. Helps the admin recognise
+  // when the owner is a known prolific HACS contributor vs a brand-new face
+  // (and notice when they've already submitted 12 cards in a batch).
+  const enriched = pending.map((it) => {
+    const m = /github\.com\/([A-Za-z0-9._-]+)\/[A-Za-z0-9._-]+$/.exec(it.url);
+    const owner = m?.[1];
+    const fullName = m ? it.url.replace(/^.*github\.com\//, '') : '';
+    return {
+      ...it,
+      related: owner ? repos.listRepoIdentsByOwner(db, owner, fullName) : [],
+    };
+  });
+  // Accepted tab uses the shared listing format. Look up each accepted
+  // queue row in `repos` (auto-approve inserted them; manual accepts also
+  // upsert) and pass to the listing component. Newly-added rows that
+  // haven't been scraped yet will show 0 stars / 0 downloads — that's
+  // accurate ("we have no data yet"), not a bug.
+  const listingRows =
+    status === 'accepted'
+      ? pending
+          .map((it) => {
+            const fullName = it.url.replace(/^.*github\.com\//, '');
+            return leaders.repoDetailByFullName(db, fullName);
+          })
+          .filter((r): r is NonNullable<typeof r> => r !== undefined)
+      : undefined;
   return c.html(
     renderLayout({
       title: 'Admin · queue — hacs-stats',
       body: renderAdminPage({
-        pending,
+        pending: enriched,
         totals,
+        status,
+        sort,
+        dir,
+        page,
+        pageSize: QUEUE_PAGE_SIZE,
         ...(msg !== undefined ? { flash: msg } : {}),
+        ...(listingRows ? { listingRows } : {}),
       }),
     }),
   );

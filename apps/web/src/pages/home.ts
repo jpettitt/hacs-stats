@@ -1,4 +1,12 @@
-import { type RowForList, fmtInt, kindLabel, renderLeaderTable, repoLink } from '../components.js';
+import {
+  type RowForList,
+  fmtDelta,
+  fmtInt,
+  kindBadge,
+  renderLeaderTable,
+  repoLink,
+  repoTags,
+} from '../components.js';
 import { escapeHtml } from '../sanitize.js';
 
 export type LeaderRow = RowForList;
@@ -23,13 +31,20 @@ function descCell(d: string | null | undefined, max = 90): string {
   return `<td class="desc-col muted small">${escapeHtml(trimmed)}</td>`;
 }
 
+/** "More" link to the full filtered list on /search. Each home section
+ * shows the top N — the link spills the user into the same listing the
+ * category cards / search dropdown lead to, so the UX is one surface. */
+function moreLink(sort: string): string {
+  return `<a class="more-link" href="/search?sort=${sort}">See all →</a>`;
+}
+
 export function renderHome(props: HomeProps): string {
   const { repoCount, topByStars, topByDownloads, trendingByStars, newArrivals, recentlyUpdated } =
     props;
 
   const trendingNote =
     trendingByStars.length === 0
-      ? '<p class="muted small">No 7-day star deltas yet. After two daily scrapes, repos that picked up new stars will appear here.</p>'
+      ? '<p class="muted small">No 30-day star deltas yet. After a few daily scrapes, repos that picked up new stars will appear here.</p>'
       : '';
 
   return `
@@ -38,27 +53,26 @@ export function renderHome(props: HomeProps): string {
     <div class="stat">Tracking <strong>${escapeHtml(fmtInt(repoCount))}</strong> repositories across the HACS catalogue.</div>
 
     <section>
-      <h2>Top by stars</h2>
+      <h2>Top by stars ${moreLink('stars')}</h2>
       ${renderLeaderTable(topByStars, {
-        valueLabel: 'Stars',
-        formatValue: (r) => escapeHtml(fmtInt(r.stars)),
-        showStarDelta: false,
+        secondaryLabel: 'Stars Δ 30d',
+        formatSecondary: (r) => escapeHtml(fmtDelta(r.star_delta_30d)),
       })}
     </section>
 
     <section>
-      <h2>Top by downloads</h2>
+      <h2>Top by downloads ${moreLink('downloads')}</h2>
       <p class="lead small">
         Cumulative downloads of the HACS-asset on each repo's latest stable
         release — closest proxy we have for current install base. Prereleases
         are excluded so a 0.0.0-rc upload doesn't displace the real number.
       </p>
       ${renderLeaderTable(topByDownloads, {
-        valueLabel: 'Downloads',
+        secondaryLabel: 'Downloads',
         // Version on its OWN line beneath the number so digits stay
         // right-aligned across rows (variable-length tags like "v0.13.0"
         // vs "v5" otherwise push numbers to different columns).
-        formatValue: (r) =>
+        formatSecondary: (r) =>
           `${escapeHtml(fmtInt(r.latest_release_downloads ?? 0))}${
             r.latest_release_tag
               ? `<br><span class="muted small">${escapeHtml(r.latest_release_tag)}</span>`
@@ -68,26 +82,24 @@ export function renderHome(props: HomeProps): string {
     </section>
 
     <section>
-      <h2>Trending (7-day star delta)</h2>
+      <h2>Trending (30-day star delta) ${moreLink('trending')}</h2>
       ${trendingNote}
       ${renderLeaderTable(trendingByStars, {
-        valueLabel: 'Stars Δ 7d',
-        formatValue: (r) => escapeHtml(`+${fmtInt(r.star_delta_30d)}`),
-        showStarDelta: false,
+        secondaryLabel: 'Stars Δ 30d',
+        formatSecondary: (r) => escapeHtml(fmtDelta(r.star_delta_30d)),
       })}
     </section>
 
     <section>
-      <h2>Recently active</h2>
+      <h2>Recently active ${moreLink('recent')}</h2>
       <p class="lead small">Most recent commit on the default branch.</p>
       <table>
-        <thead><tr><th>Repo</th><th class="desc-col">Description</th><th>Kind</th><th class="num">Last commit</th><th class="num">Stars</th></tr></thead>
+        <thead><tr><th>Repo</th><th class="desc-col">Description</th><th class="num">Last commit</th><th class="num">Stars</th></tr></thead>
         <tbody>${recentlyUpdated
           .map(
             (r) => `<tr>
-              <td>${repoLink(r.full_name, r.hacs_name)}</td>
+              <td>${repoLink(r.full_name, r.hacs_name)}${kindBadge(r.kind)}${repoTags(r)}</td>
               ${descCell(r.description)}
-              <td class="kind">${kindLabel(r.kind)}</td>
               <td class="num small">${fmtDate(r.last_commit_at)}</td>
               <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
             </tr>`,
@@ -97,17 +109,17 @@ export function renderHome(props: HomeProps): string {
     </section>
 
     <section>
-      <h2>New arrivals</h2>
-      <p class="lead small">Recently added to the HACS default lists.</p>
+      <h2>New arrivals ${moreLink('new')}</h2>
+      <p class="lead small">Recently added to the catalogue — from the official HACS default lists, discovered by our code-search of <code>hacs.json</code> files, or submitted via the public form. The badge on each row shows which.</p>
       <table>
-        <thead><tr><th>Repo</th><th class="desc-col">Description</th><th>Kind</th><th class="num">First seen</th></tr></thead>
+        <thead><tr><th>Repo</th><th class="desc-col">Description</th><th class="num">First seen</th><th class="num">Stars</th></tr></thead>
         <tbody>${newArrivals
           .map(
             (r) => `<tr>
-              <td>${repoLink(r.full_name, r.hacs_name)}</td>
+              <td>${repoLink(r.full_name, r.hacs_name)}${kindBadge(r.kind)}${repoTags(r)}</td>
               ${descCell(r.description)}
-              <td class="kind">${kindLabel(r.kind)}</td>
               <td class="num small">${fmtDate(r.first_seen_at)}</td>
+              <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
             </tr>`,
           )
           .join('')}</tbody>

@@ -7,7 +7,10 @@ export interface RepoDetailProps {
   hacs_name: string | null;
   kind: string;
   source: string;
+  state: string;
+  first_failure_at: string | null;
   is_fork: number;
+  parent_full_name: string | null;
   description: string | null;
   archived: number;
   hacs_filename: string | null;
@@ -40,6 +43,10 @@ export interface RepoDetailViewModel {
     html_url: string;
     downloads: number;
   }>;
+  /** Other repos in the catalogue owned by the same GitHub owner. Empty
+   * when this is the only one (the page renders a sibling-count line, no
+   * full section). */
+  relatedRepos: Array<{ full_name: string; hacs_name: string | null; kind: string }>;
 }
 
 function fmtDate(iso: string | null): string {
@@ -48,7 +55,8 @@ function fmtDate(iso: string | null): string {
 }
 
 export function renderRepoDetail(vm: RepoDetailViewModel): string {
-  const { detail, starsSeries, releases } = vm;
+  const { detail, starsSeries, releases, relatedRepos } = vm;
+  const owner = detail.full_name.split('/')[0] ?? '';
   const ghUrl = safeGithubRepoUrl(detail.full_name);
 
   // Title: prefer the hacs.json name (escaped); always show owner/repo as a
@@ -82,6 +90,44 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
   // We expose the clean 30d delta (latest release's own growth) as a
   // second tile — NOT the legacy SUM-across-releases, which double-counted
   // upgrades.
+  // Lifecycle banner: makes the page's "this is non-default state" context
+  // unmissable when the user has navigated to a pending/offline/removed
+  // repo (they got here on purpose — via /pending, /removed, or a link).
+  let lifecycleBanner = '';
+  if (detail.state === 'pending') {
+    lifecycleBanner = `
+      <div class="banner banner-info">
+        <strong>Pending scrape.</strong>
+        <span>We've accepted this repo into the catalogue but the next nightly
+        scrape will fill in stars / downloads / release history. Numbers below
+        may be empty until then.</span>
+      </div>`;
+  } else if (detail.state === 'offline') {
+    const since = detail.first_failure_at
+      ? ` since ${escapeHtml(detail.first_failure_at.slice(0, 10))}`
+      : '';
+    lifecycleBanner = `
+      <div class="banner banner-warn">
+        <strong>Offline${since}.</strong>
+        <span>Recent scrapes haven't been able to reach this repo. It may have
+        been moved, made private, or deleted on GitHub. Numbers below are the
+        last known good values; after 30 days of failures it will move to the
+        removed list.</span>
+      </div>`;
+  } else if (detail.state === 'removed') {
+    lifecycleBanner = `
+      <div class="banner banner-err">
+        <strong>Removed.</strong>
+        <span>This repo has been unreachable for 30+ days. Data is historical;
+        nothing here is being refreshed.</span>
+      </div>`;
+  }
+
+  // The page is rendered the same way for all repos — pending/offline/removed
+  // get a banner above (see lifecycle banners below) but the stat tiles
+  // always show whatever data we have. The state machine hides pending
+  // repos from default listings; if you reached this page, you wanted to
+  // see what's known about it.
   const downloadsLabel = detail.latest_release_tag
     ? `downloads of ${detail.latest_release_tag}`
     : 'downloads (latest release)';
@@ -139,10 +185,22 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
     ? `<code>${escapeHtml(detail.hacs_filename)}</code>`
     : '<span class="muted">(none declared; we use the most-downloaded asset per release as the install proxy)</span>';
 
+  // For forks, surface what they were forked from so the user can chase
+  // the lineage. Link goes to the parent's GitHub page (we don't necessarily
+  // have it in our own catalogue).
+  const forkParentRow = detail.is_fork
+    ? `<tr><td>Forked from</td><td>${
+        detail.parent_full_name
+          ? `<a href="https://github.com/${escapeHtml(detail.parent_full_name)}" target="_blank" rel="noopener noreferrer">${escapeHtml(detail.parent_full_name)} ↗</a>`
+          : '<span class="muted">unknown (GitHub didn’t return a parent)</span>'
+      }</td></tr>`
+    : '';
+
   const metaTable = `
     <table>
       <tbody>
         <tr><td>Kind</td><td>${kindLabel(detail.kind)}</td></tr>
+        ${forkParentRow}
         <tr><td>HACS asset</td><td>${hacsFilename}</td></tr>
         <tr><td>Default branch</td><td>${escapeHtml(detail.default_branch ?? '—')}</td></tr>
         <tr><td>Last upstream commit</td><td>${fmtDate(detail.last_commit_at)}</td></tr>
@@ -155,6 +213,7 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
     <h2 class="repo-title">${titleHeading}${archivedBadge}</h2>
     ${subtitle}
     ${description}
+    ${lifecycleBanner}
     ${statsGrid}
     ${hotVersion}
     <section>
@@ -169,5 +228,45 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
     <section>
       <h2>Recent releases</h2>
       ${releasesTable}
+    </section>
+    ${renderRelatedSection(owner, relatedRepos)}`;
+}
+
+/**
+ * Lists other repos by the same owner so visitors can browse a prolific
+ * author's catalogue (e.g. PiotrMachowski, thomasloven). Shown unconditionally
+ * — even when empty — because the "only one we've seen from this owner" state
+ * is itself useful signal. Links to /owner/<name> for the full owner page.
+ */
+function renderRelatedSection(
+  owner: string,
+  related: Array<{ full_name: string; hacs_name: string | null; kind: string }>,
+): string {
+  if (!owner) return '';
+  const safeOwner = escapeHtml(owner);
+  if (related.length === 0) {
+    return `
+      <section>
+        <h2>Other repos from <a href="/owner/${safeOwner}">${safeOwner}</a></h2>
+        <p class="muted">This is the only repo we've catalogued from this owner.</p>
+      </section>`;
+  }
+  const items = related
+    .slice(0, 20)
+    .map((r) => {
+      const safe = escapeHtml(r.full_name);
+      const label = r.hacs_name ? escapeHtml(r.hacs_name) : safe;
+      return `<li><a href="/r/${safe}">${label}</a> <span class="muted small">${escapeHtml(r.kind)}</span></li>`;
+    })
+    .join('');
+  const more =
+    related.length > 20
+      ? `<p class="muted small">… and ${related.length - 20} more — see <a href="/owner/${safeOwner}">/owner/${safeOwner}</a>.</p>`
+      : '';
+  return `
+    <section>
+      <h2>Other repos from <a href="/owner/${safeOwner}">${safeOwner}</a> (${related.length})</h2>
+      <ul class="related-list">${items}</ul>
+      ${more}
     </section>`;
 }

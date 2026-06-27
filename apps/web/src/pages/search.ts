@@ -1,5 +1,6 @@
 import {
   type RowForList,
+  fmtDelta,
   fmtInt,
   kindLabel,
   renderLeaderTable,
@@ -12,8 +13,9 @@ export const SORT_OPTIONS = [
   { value: 'name', label: 'Name (A-Z)' },
   { value: 'stars', label: 'Stars (high to low)' },
   { value: 'downloads', label: 'Downloads (latest release)' },
-  { value: 'trending', label: 'Trending (30d Δ)' },
+  { value: 'trending', label: 'Trending (stars Δ 30d)' },
   { value: 'recent', label: 'Recently active' },
+  { value: 'new', label: 'New arrivals' },
 ] as const;
 
 export type SortValue = (typeof SORT_OPTIONS)[number]['value'];
@@ -44,14 +46,18 @@ function dropdown(
     .join('')}</select>`;
 }
 
-function valueForSort(r: RowForList, sort: SortValue): string {
-  // formatValue returns trusted HTML; caller escapes anything user-derived.
-  // For sort='name' the sort key IS the repo name (already in the Repo
-  // column), so the value cell shows stars as the consolation metric —
-  // see columnHeaderForSort for the matching column label.
+/**
+ * Map a sort key to the cell that should appear immediately left of the
+ * always-rightmost Stars column. The spec:
+ *   - sort by name / stars / trending → secondary is Stars Δ 30d
+ *     (we'd just be re-showing the same number otherwise; Δ tells you why
+ *      it moved up the list).
+ *   - sort by downloads → secondary is Downloads.
+ *   - sort by recent → secondary is Last commit.
+ *   - sort by new → secondary is First seen.
+ */
+function secondaryValueForSort(r: RowForList, sort: SortValue): string {
   switch (sort) {
-    case 'stars':
-      return escapeHtml(fmtInt(r.stars));
     case 'downloads':
       // Version on its own line so digits align in the column (matches
       // the home "Top by downloads" treatment).
@@ -60,29 +66,27 @@ function valueForSort(r: RowForList, sort: SortValue): string {
           ? `<br><span class="muted small">${escapeHtml(r.latest_release_tag)}</span>`
           : ''
       }`;
-    case 'trending':
-      return escapeHtml(fmtInt(r.downloads_30d));
     case 'recent':
       return r.last_commit_at ? escapeHtml(r.last_commit_at.slice(0, 10)) : '—';
+    case 'new':
+      return escapeHtml((r.first_seen_at ?? '').slice(0, 10));
     default:
-      return escapeHtml(fmtInt(r.stars));
+      // name / stars / trending all use Stars Δ 30d as the secondary —
+      // signed delta so + / - is meaningful.
+      return escapeHtml(fmtDelta(r.star_delta_30d));
   }
 }
 
-/** Column header — must match what valueForSort actually puts in the cell.
- * Not the same as the sort-dropdown label; the dropdown describes the SORT,
- * this describes the column's CONTENT. (Previously they were the same and
- * we ended up showing "399" under a "Name (A-Z)" header.) */
-function columnHeaderForSort(sort: SortValue): string {
+function secondaryLabelForSort(sort: SortValue): string {
   switch (sort) {
     case 'downloads':
       return 'Downloads';
-    case 'trending':
-      return 'New in 30d';
     case 'recent':
       return 'Last commit';
+    case 'new':
+      return 'First seen';
     default:
-      return 'Stars';
+      return 'Stars Δ 30d';
   }
 }
 
@@ -126,11 +130,8 @@ export function renderSearchPage(props: SearchPageProps): string {
       : `${props.total} repos${props.kind ? ` in <code>${escapeHtml(props.kind)}</code>` : ''}, sorted by ${escapeHtml(labelForSort(props.sort).toLowerCase())}`;
 
   const table = renderLeaderTable(props.hits, {
-    valueLabel: columnHeaderForSort(props.sort),
-    formatValue: (r) => valueForSort(r as RowForList, props.sort),
-    // Hide the stars-delta column when sorting by stars — it'd be the same
-    // column twice — but show it elsewhere so users see the trend.
-    showStarDelta: props.sort !== 'stars',
+    secondaryLabel: secondaryLabelForSort(props.sort),
+    formatSecondary: (r) => secondaryValueForSort(r as RowForList, props.sort),
   });
 
   // Build the base URL preserving every filter EXCEPT page (the pagination

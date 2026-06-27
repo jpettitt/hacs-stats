@@ -40,6 +40,20 @@ Two sources:
    by URL. Discovered via a weekly GitHub code-search for `hacs.json` (the
    manifest file every HACS repo must include), plus user submissions.
 
+Discovered candidates flow through a queue at `/admin/queue`. High-confidence
+candidates auto-approve: ≥50 stars *and* pushed within the last 6 months go
+straight into the catalogue. Owners that already have a `default`-listed repo
+get a lower 5-star bar (trusted-owner discount). Everything else queues for
+manual review. Run `pnpm discover` for a single sweep, or
+`pnpm discover:bands` to walk 15 file-size bands and break past the GitHub
+code-search 1000-result cap.
+
+Catalogued repos move through a lifecycle: `pending` (just added, no scrape
+yet) → `active` (default) → `offline` (failing GraphQL) → `removed` (30+ days
+offline). GitHub repo renames are picked up via the canonical `nameWithOwner`
+field and the row is renamed in place (or deduped against an existing
+canonical row).
+
 ## Stack
 
 A single-VPS Node app behind Cloudflare-as-CDN.
@@ -83,7 +97,15 @@ Snapshot durability matters — see [ARCHITECTURE.md → Local development](./AR
 See [deploy/README.md](./deploy/README.md) for the VPS install steps,
 systemd units, Caddyfile, and Cloudflare DNS / Origin Cert setup.
 
-## Copyright
+## License
 
-Copyright © John Pettitt. All rights reserved. Closed source — no license is
-granted to copy, modify, distribute, or use this code.
+Copyright © John Pettitt.
+
+Licensed under the **GNU Affero General Public License v3.0 or later** —
+see [LICENSE](./LICENSE) for the full text.
+
+AGPL is strong copyleft and includes the "network use" clause: anyone who
+modifies hacs-stats and runs the modified version as a network service
+(e.g. their own dashboard) must offer their users the corresponding
+source code under the same license. If that's a problem for your use case,
+get in touch.

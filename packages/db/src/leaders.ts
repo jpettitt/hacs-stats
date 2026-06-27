@@ -17,6 +17,14 @@ export interface LeaderRow {
   description: string | null;
   archived: number;
   is_fork: number;
+  /** ISO string from the last successful scrape, or null if never scraped. */
+  last_scraped_at: string | null;
+  /** pending | active | offline | removed — lifecycle state. Listings filter
+   * to 'active' by default; /pending and /removed surface the others. */
+  state: string;
+  /** ISO timestamp of first failure in the current failure run (for offline
+   * → removed countdown). Null when not in a failure state. */
+  first_failure_at: string | null;
   stars: number;
   /** Cumulative downloads on the repo's latest non-prerelease release. */
   latest_release_downloads: number;
@@ -40,7 +48,7 @@ export interface LeaderRow {
 const LEADER_SELECT = `
   SELECT
     r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork,
-    r.first_seen_at,
+    r.first_seen_at, r.last_scraped_at, r.state, r.first_failure_at,
     COALESCE(latest.stars, 0)                         AS stars,
     latest.last_commit_at,
     COALESCE(sc.latest_release_downloads, 0)          AS latest_release_downloads,
@@ -61,16 +69,35 @@ const LEADER_SELECT = `
   ) latest ON latest.repo_id = r.id
 `;
 
+// All default leaderboard queries filter to state='active' and
+// suppressed=0. Suppressed rows are platform / meta repos that aren't
+// HACS modules in the user-installable sense (e.g. hacs/integration
+// itself) — kept in the catalogue so re-discovery doesn't re-add them,
+// but hidden from every public surface.
+//
+// Stale-3y rule: repos with no default-branch commit in 3+ years are
+// hidden from every listing even if HACS still lists them as default.
+// The data is kept (so /pending/removed pages can still surface them
+// and we don't lose history) but they're treated as abandoned for
+// listing purposes. last_commit_at IS NULL means "we don't know yet"
+// (e.g. a freshly auto-approved row before the first scrape) — keep
+// those visible until we have a real signal.
+const STALE_CUTOFF = "date('now', '-3 years')";
+const ACTIVE_ONLY = `r.state = 'active' AND r.suppressed = 0
+  AND (latest.last_commit_at IS NULL OR latest.last_commit_at > ${STALE_CUTOFF})`;
+
 export function topByStars(db: Db, limit = 20): LeaderRow[] {
   return db.raw
-    .prepare<[number], LeaderRow>(`${LEADER_SELECT} ORDER BY stars DESC LIMIT ?`)
+    .prepare<[number], LeaderRow>(
+      `${LEADER_SELECT} WHERE ${ACTIVE_ONLY} ORDER BY stars DESC LIMIT ?`,
+    )
     .all(limit);
 }
 
 export function topByDownloads30d(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
-      `${LEADER_SELECT} ORDER BY downloads_30d DESC, stars DESC LIMIT ?`,
+      `${LEADER_SELECT} WHERE ${ACTIVE_ONLY} ORDER BY downloads_30d DESC, stars DESC LIMIT ?`,
     )
     .all(limit);
 }
@@ -83,31 +110,34 @@ export function topByDownloads30d(db: Db, limit = 20): LeaderRow[] {
 export function topByLatestReleaseDownloads(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
-      `${LEADER_SELECT} ORDER BY latest_release_downloads DESC, stars DESC LIMIT ?`,
+      `${LEADER_SELECT} WHERE ${ACTIVE_ONLY} ORDER BY latest_release_downloads DESC, stars DESC LIMIT ?`,
     )
     .all(limit);
 }
 
+/** Top by 30-day star delta. Matches the /search?sort=trending ranking
+ * exactly so the home "Trending" section's "See all" link lands on the
+ * same metric, just paginated. */
 export function trendingByStars(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
       `${LEADER_SELECT}
-        WHERE COALESCE(sc.star_delta_7d, 0) > 0
-        ORDER BY star_delta_7d DESC, stars DESC
+        WHERE ${ACTIVE_ONLY} AND COALESCE(sc.star_delta_30d, 0) > 0
+        ORDER BY star_delta_30d DESC, stars DESC
         LIMIT ?`,
     )
     .all(limit);
 }
 
 /**
- * Recently added to the HACS default lists — first_seen_at is set when our
- * scraper first sees a repo. On day 1 every repo has the same value, so this
- * is most useful on day 2+.
+ * Recently added — first_seen_at is set when our scraper first sees a repo.
+ * Filtered to state='active' so pending submissions don't show until their
+ * first successful scrape.
  */
 export function newArrivals(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
-      `${LEADER_SELECT} ORDER BY r.first_seen_at DESC, r.id DESC LIMIT ?`,
+      `${LEADER_SELECT} WHERE ${ACTIVE_ONLY} ORDER BY r.first_seen_at DESC, r.id DESC LIMIT ?`,
     )
     .all(limit);
 }
@@ -120,9 +150,49 @@ export function recentlyUpdated(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
       `${LEADER_SELECT}
-        WHERE latest.last_commit_at IS NOT NULL
+        WHERE ${ACTIVE_ONLY} AND latest.last_commit_at IS NOT NULL
         ORDER BY latest.last_commit_at DESC
         LIMIT ?`,
+    )
+    .all(limit);
+}
+
+/**
+ * Repos awaiting their first successful scrape. Surfaced on /pending so the
+ * admin (and submitters) can see what's queued. Most useful right after a
+ * batch of accepts via /admin/queue.
+ */
+/**
+ * Every repo (any state) belonging to a single GitHub owner — powers the
+ * /owner/:owner page so visitors can see an author's full HACS portfolio at
+ * once. Includes pending/offline/removed too: showing only 'active' would
+ * hide newly-auto-approved repos that haven't been scraped yet, which is
+ * the opposite of what a portfolio page should do.
+ */
+export function reposByOwner(db: Db, owner: string, limit = 200): LeaderRow[] {
+  return db.raw
+    .prepare<[string, number], LeaderRow>(
+      `${LEADER_SELECT} WHERE r.owner = ? AND r.suppressed = 0 ORDER BY stars DESC, r.full_name LIMIT ?`,
+    )
+    .all(owner, limit);
+}
+
+export function pendingRepos(db: Db, limit = 200): LeaderRow[] {
+  return db.raw
+    .prepare<[number], LeaderRow>(
+      `${LEADER_SELECT} WHERE r.state = 'pending' ORDER BY r.first_seen_at DESC LIMIT ?`,
+    )
+    .all(limit);
+}
+
+/**
+ * Repos that were once active but have been unreachable for 30+ days.
+ * Surfaced on /removed; default listings never show them.
+ */
+export function removedRepos(db: Db, limit = 200): LeaderRow[] {
+  return db.raw
+    .prepare<[number], LeaderRow>(
+      `${LEADER_SELECT} WHERE r.state = 'removed' ORDER BY r.first_failure_at DESC LIMIT ?`,
     )
     .all(limit);
 }
@@ -135,17 +205,19 @@ export interface CategoryPage {
 export function topByCategory(db: Db, kind: RepoKind, limit = 50, offset = 0): CategoryPage {
   const rows = db.raw
     .prepare<[RepoKind, number, number], LeaderRow>(
-      `${LEADER_SELECT} WHERE r.kind = ? ORDER BY stars DESC LIMIT ? OFFSET ?`,
+      `${LEADER_SELECT} WHERE r.kind = ? AND r.suppressed = 0 ORDER BY stars DESC LIMIT ? OFFSET ?`,
     )
     .all(kind, limit, offset);
   const total =
     db.raw
-      .prepare<[RepoKind], { n: number }>('SELECT COUNT(*) AS n FROM repos WHERE kind = ?')
+      .prepare<[RepoKind], { n: number }>(
+        'SELECT COUNT(*) AS n FROM repos WHERE kind = ? AND suppressed = 0',
+      )
       .get(kind)?.n ?? 0;
   return { rows, total };
 }
 
-export const SEARCH_SORTS = ['name', 'stars', 'downloads', 'trending', 'recent'] as const;
+export const SEARCH_SORTS = ['name', 'stars', 'downloads', 'trending', 'recent', 'new'] as const;
 export type SearchSort = (typeof SEARCH_SORTS)[number];
 
 export const SEARCH_SORT_LABELS: Record<SearchSort, string> = {
@@ -154,6 +226,7 @@ export const SEARCH_SORT_LABELS: Record<SearchSort, string> = {
   downloads: 'Downloads (latest release)',
   trending: 'Trending (30d downloads delta)',
   recent: 'Recently active',
+  new: 'New arrivals',
 };
 
 // ORDER BY clauses are NEVER interpolated from user input directly — the
@@ -164,10 +237,13 @@ const ORDER_BY_BY_SORT: Record<SearchSort, string> = {
   name: "COALESCE(NULLIF(r.hacs_name, ''), r.full_name) COLLATE NOCASE ASC",
   stars: 'stars DESC, r.full_name COLLATE NOCASE ASC',
   downloads: 'latest_release_downloads DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
-  // trending uses the new clean 30d-delta on the latest release, NOT the
-  // legacy SUM-across-releases column which double-counts upgrades.
-  trending: 'latest_release_downloads_30d DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
+  // Trending = star delta over the last 30 days. Previously ranked by
+  // download delta which was a different metric than the home page's
+  // "Trending" section (star delta) — clicking "See all" from there
+  // dropped users into a list sorted by something else entirely.
+  trending: 'star_delta_30d DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
   recent: 'latest.last_commit_at DESC, r.full_name COLLATE NOCASE ASC',
+  new: 'r.first_seen_at DESC, r.id DESC',
 };
 
 export interface SearchOptions {
@@ -206,7 +282,13 @@ export function searchRepos(db: Db, opts: SearchOptions): SearchResult {
   const hasQ = opts.q.length > 0;
   const orderBy = ORDER_BY_BY_SORT[sort];
 
-  const wheres: string[] = [];
+  // Always exclude suppressed + stale-3y rows. The stale predicate needs
+  // last_commit_at from the latest snapshot — both queries below JOIN to
+  // `latest` so the predicate can reference latest.last_commit_at.
+  const wheres: string[] = [
+    'r.suppressed = 0',
+    `(latest.last_commit_at IS NULL OR latest.last_commit_at > ${STALE_CUTOFF})`,
+  ];
   const params: unknown[] = [];
   if (hasQ) {
     wheres.push(
@@ -218,12 +300,29 @@ export function searchRepos(db: Db, opts: SearchOptions): SearchResult {
     wheres.push('r.kind = ?');
     params.push(opts.kind);
   }
+  // Sort-specific filter: trending only makes sense for repos that
+  // actually moved. Without this, "Trending" is dominated by 7000+
+  // repos at delta=0 with the handful of real movers buried below the
+  // first page. EXISTS keeps the COUNT(*) query (no JOINs) working.
+  if (sort === 'trending') {
+    wheres.push(
+      'EXISTS (SELECT 1 FROM stats_cache sc WHERE sc.repo_id = r.id AND COALESCE(sc.star_delta_30d, 0) != 0)',
+    );
+  }
   const whereClause = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
 
-  // Cheap COUNT(*) — uses the same WHERE but no joins. ~5ms on 3.3k rows.
+  // COUNT(*) uses the same WHERE — must JOIN `latest` for the stale-3y
+  // predicate. The inner SELECT MAX(snapshot_date) is one row regardless
+  // of repo count; the JOIN itself is on indexed (repo_id, snapshot_date).
+  const latestJoin = `LEFT JOIN (
+      SELECT repo_id, last_commit_at FROM repo_snapshots
+      WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM repo_snapshots)
+    ) latest ON latest.repo_id = r.id`;
   const total =
     db.raw
-      .prepare<unknown[], { n: number }>(`SELECT COUNT(*) AS n FROM repos r ${whereClause}`)
+      .prepare<unknown[], { n: number }>(
+        `SELECT COUNT(*) AS n FROM repos r ${latestJoin} ${whereClause}`,
+      )
       .get(...params)?.n ?? 0;
 
   const pageParams = [...params, limit, offset];
@@ -236,17 +335,19 @@ export function searchRepos(db: Db, opts: SearchOptions): SearchResult {
 export interface RepoDetail extends LeaderRow {
   hacs_filename: string | null;
   default_branch: string | null;
+  parent_full_name: string | null;
   owner: string;
   name: string;
-  last_scraped_at: string | null;
 }
 
 export function repoDetailByFullName(db: Db, fullName: string): RepoDetail | undefined {
+  // RepoDetail already has last_scraped_at via LeaderRow — but we ALSO want
+  // owner / name / hacs_filename / default_branch / parent_full_name here.
   return db.raw
     .prepare<[string], RepoDetail>(
       `${LEADER_SELECT.replace(
         'r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork,',
-        'r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork, r.owner, r.name, r.hacs_filename, r.default_branch, r.last_scraped_at,',
+        'r.id, r.full_name, r.hacs_name, r.kind, r.source, r.description, r.archived, r.is_fork, r.owner, r.name, r.hacs_filename, r.default_branch, r.parent_full_name,',
       )} WHERE r.full_name = ?`,
     )
     .get(fullName);

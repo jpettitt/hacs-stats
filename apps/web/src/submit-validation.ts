@@ -7,6 +7,11 @@
 const USER_AGENT = 'hacs-stats/0.0.0 (+https://hacs-stats.dev)';
 const SAFE_PART = /^[A-Za-z0-9._-]+$/;
 
+/** Mirrors SUPPRESSED_FULLNAMES in apps/scraper/src/discovery.ts —
+ * platform repos (hacs/integration etc) we explicitly don't want in the
+ * catalogue. Kept in sync by hand; both are short lists. */
+const SUPPRESSED_FULLNAMES = new Set<string>(['hacs/integration']);
+
 const HACS_MEANINGFUL_FIELDS = new Set([
   'name',
   'filename',
@@ -43,10 +48,17 @@ export type SubmissionFailure =
   | 'no-hacs-json'
   | 'malformed-hacs-json'
   | 'not-meaningful'
+  | 'suppressed'
+  | 'stale'
   // Forks are allowed via submission (the submitter is vouching for it as
   // the real canonical), but if the submitted repo is a fork we still
   // record it so the admin sees the lineage.
   | 'network-error';
+
+/** Mirrors STALE_MS in apps/scraper/src/discovery.ts and the 3-year
+ * listing filter in packages/db/src/leaders.ts — no point accepting a
+ * submission for a repo we'd hide on render. */
+const STALE_MS = 3 * 365 * 24 * 60 * 60 * 1000;
 
 export interface SubmissionResult {
   ok: boolean;
@@ -65,6 +77,9 @@ export async function validateSubmission(
   opts: ValidateSubmissionOptions = {},
 ): Promise<SubmissionResult> {
   if (!isWellFormedRepoFullName(fullName)) return { ok: false, failure: 'invalid-name' };
+  if (SUPPRESSED_FULLNAMES.has(fullName.toLowerCase())) {
+    return { ok: false, failure: 'suppressed' };
+  }
 
   const fetchImpl = opts.fetchImpl ?? fetch;
   const headers: Record<string, string> = {
@@ -86,7 +101,17 @@ export async function validateSubmission(
     return { ok: false, failure: 'private-or-removed' };
   }
   if (!repoRes.ok) return { ok: false, failure: 'network-error' };
-  const repo = (await repoRes.json()) as { fork?: boolean; full_name?: string };
+  const repo = (await repoRes.json()) as {
+    fork?: boolean;
+    full_name?: string;
+    pushed_at?: string;
+  };
+  if (typeof repo.pushed_at === 'string') {
+    const pushedMs = Date.parse(repo.pushed_at);
+    if (Number.isFinite(pushedMs) && Date.now() - pushedMs > STALE_MS) {
+      return { ok: false, failure: 'stale' };
+    }
+  }
 
   // 2. hacs.json must exist at the root and parse.
   let hacsRes: Response;
