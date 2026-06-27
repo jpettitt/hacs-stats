@@ -216,6 +216,45 @@ better batching). For 3k repos:
 A daily scrape fits comfortably in a single hour. A GitHub **App** (15k/hr)
 is overkill at v1; revisit if we ever need it.
 
+## Filter & rejection matrix
+
+Repos enter the catalogue through three channels (`source` column on
+`repos`, also reflected in `discovery_queue.source`). The acceptance and
+visibility rules differ per channel — keeping this table current avoids
+having to grep `discover.ts`, `sweep-queue.ts`, `submit-validation.ts`,
+and `leaders.ts` to reconstruct the policy:
+
+| Rule | `default` (HACS list) | `code_search` (discovery) | `user_submission` |
+| --- | --- | --- | --- |
+| Stale-3y listing filter (`leaders.ts` ACTIVE_ONLY) | Hides | Hides | Hides |
+| Discovery-time stale reject (1y) | n/a | Rejects (`discovery.ts` STALE_MS) | n/a |
+| Submit-time stale reject (3y) | n/a | n/a | Rejects (`submit-validation.ts`) |
+| Discovery-time 0-star reject | n/a | Rejects | n/a |
+| Sweep stale-reject (1y, `sweep-queue.ts`) | n/a | Applies | **Spared** (submitter vouched) |
+| Sweep 0-star reject | n/a | Applies | **Spared** |
+| Suppressed flag (`hacs/integration` etc) | Hides | Hides | Rejects at submit |
+| Re-discoverable after auto-reject | n/a | Yes (notes-marker excluded from skip-set) | Yes |
+| Re-discoverable after manual reject | n/a | **No** (manual decisions are sticky) | **No** |
+
+Asymmetry rationale:
+
+- **Unattended channels are stricter.** `code_search` runs without human
+  judgement — applying the tighter 1y / 0-star bars prevents queue
+  flooding with low-signal candidates. Discovery's threshold lives in
+  `apps/scraper/src/discovery.ts` (`STALE_MS`, 0-star check).
+- **Submitters vouch with their attention.** A human filling out the
+  /submit form is signal — we relax the auto-rejects accordingly and
+  rely on the listing-time 3y filter as the final guard.
+- **Manual rejections are sticky.** When an admin clicks Reject the
+  decision is final; only automatic rejections (notes containing
+  `auto-rejected` or `sweep:`) come back through re-discovery if the
+  upstream condition flips. See the project memory note
+  `queue-decisions-stringly-typed` — when a fourth decision source
+  arrives, replace the notes-marker convention with a structured column.
+
+Before adding a fourth channel or a new filter rule, update this table
+in the same commit.
+
 ## Cloudflare-as-CDN setup
 
 1. **DNS:** `hacs-stats.dev` A record → VPS public IP. Proxy status: **on**
