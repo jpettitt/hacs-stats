@@ -578,7 +578,8 @@ export function renderLayout(props: LayoutProps): string {
     Data sourced from public GitHub APIs. Downloads are a proxy for installs;
     Home Assistant does not phone home. Not affiliated with HACS.
     See the methodology on the <a href="/about">About</a> page ·
-    <a href="/privacy">Privacy</a>
+    <a href="/privacy">Privacy</a> ·
+    <a href="https://github.com/jpettitt/hacs-stats" target="_blank" rel="noopener noreferrer">Source (AGPL-3.0)</a>
   </footer>
 </body>
 </html>`;

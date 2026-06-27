@@ -97,7 +97,15 @@ Snapshot durability matters — see [ARCHITECTURE.md → Local development](./AR
 See [deploy/README.md](./deploy/README.md) for the VPS install steps,
 systemd units, Caddyfile, and Cloudflare DNS / Origin Cert setup.
 
-## Copyright
+## License
 
-Copyright © John Pettitt. All rights reserved. Closed source — no license is
-granted to copy, modify, distribute, or use this code.
+Copyright © John Pettitt.
+
+Licensed under the **GNU Affero General Public License v3.0 or later** —
+see [LICENSE](./LICENSE) for the full text.
+
+AGPL is strong copyleft and includes the "network use" clause: anyone who
+modifies hacs-stats and runs the modified version as a network service
+(e.g. their own dashboard) must offer their users the corresponding
+source code under the same license. If that's a problem for your use case,
+get in touch.

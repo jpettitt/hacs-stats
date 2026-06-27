@@ -4,7 +4,7 @@
   "private": true,
   "description": "Unofficial usage stats for HACS — Home Assistant Community Store.",
   "author": "John Pettitt",
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@11.3.0",
   "engines": {
     "node": ">=22"

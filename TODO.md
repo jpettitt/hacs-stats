@@ -8,7 +8,7 @@ Phased build plan. Each phase ends in something runnable.
 - [x] Write [README.md](./README.md), [ARCHITECTURE.md](./ARCHITECTURE.md), this file
 - [x] Decide on domain — **hacs-stats.dev** (primary), `.com` redirects
 - [x] Decide on relationship — independent / unofficial
-- [x] Decide on license — **closed source, Copyright John Pettitt** (no LICENSE file)
+- [x] Decide on license — **AGPL-3.0-or-later** (see [LICENSE](./LICENSE)). Network-use copyleft prevents proprietary forks of the dashboard.
 - [x] Decide on hosting — VPS + Cloudflare-as-CDN (replaces the earlier
       Cloudflare-Workers plan; CF kept only for edge TLS / CDN / DDoS)
 - [x] `git init`, first commit
