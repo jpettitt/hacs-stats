@@ -569,8 +569,16 @@ app.get('/api/repo/:owner/:name', (c) => {
   });
 });
 
-const server = serve({ fetch: app.fetch, port: PORT }, ({ port }) => {
-  console.log(`hacs-stats web listening on http://localhost:${port}`);
+// Bind explicitly to 127.0.0.1. Node's default binds to `::` (IPv6) only,
+// and on kernels with net.ipv6.bindv6only=1 (Debian/Ubuntu defaults in
+// some configs) Caddy reverse-proxying to 127.0.0.1:PORT gets connection-
+// refused even though the socket exists on the v6 side. We never want
+// the Node process exposed publicly anyway — Caddy fronts everything —
+// so localhost-only is the right default. Override via HOST env if you
+// genuinely need the daemon reachable from another interface.
+const HOST = process.env.HOST ?? '127.0.0.1';
+const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, ({ port }) => {
+  console.log(`hacs-stats web listening on http://${HOST}:${port}`);
   console.log(`  DB (read-only): ${DATABASE_PATH}`);
 });
 
