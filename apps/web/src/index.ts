@@ -10,6 +10,7 @@ import { renderCategoriesIndex } from './pages/category.js';
 import { renderHome } from './pages/home.js';
 import { renderPendingPage, renderRemovedPage } from './pages/lifecycle.js';
 import { renderOwnerPage } from './pages/owner.js';
+import { renderPrivacyPage } from './pages/privacy.js';
 import { renderRepoDetail } from './pages/repo.js';
 import { renderSearchPage } from './pages/search.js';
 import { renderSubmitPage } from './pages/submit.js';
@@ -293,6 +294,10 @@ app.get('/about', (c) =>
   c.html(
     renderLayout({ title: 'About — hacs-stats', navActive: 'about', body: renderAboutPage() }),
   ),
+);
+
+app.get('/privacy', (c) =>
+  c.html(renderLayout({ title: 'Privacy — hacs-stats', body: renderPrivacyPage() })),
 );
 
 // ---------------------------------------------------------------------------

@@ -577,7 +577,8 @@ export function renderLayout(props: LayoutProps): string {
   <footer class="page">
     Data sourced from public GitHub APIs. Downloads are a proxy for installs;
     Home Assistant does not phone home. Not affiliated with HACS.
-    See the methodology on the <a href="/about">About</a> page.
+    See the methodology on the <a href="/about">About</a> page ·
+    <a href="/privacy">Privacy</a>
   </footer>
 </body>
 </html>`;
