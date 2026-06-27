@@ -38,16 +38,26 @@ const app = new Hono();
 // Defence-in-depth: even if a sanitisation bug ever lets a `<script>` slip
 // into rendered HTML, this CSP prevents the browser from executing it.
 // - default-src 'self'      — disallow off-domain scripts, fonts, iframes, etc.
+// - script-src — allow self + Google Tag Manager (the gtag loader lives at
+//   googletagmanager.com) + a single SHA-256 hash for the inline gtag-
+//   config snippet in layout.ts. The hash binds to the EXACT bytes in
+//   GTAG_INLINE; change either side and the script silently stops
+//   executing (analytics breaks, page still renders). Recompute with:
+//     printf '%s' "<inline script body>" | openssl dgst -sha256 -binary | openssl base64
+// - connect-src — gtag posts beacons to *.google-analytics.com etc.
+// - img-src 'self' data: — small inline icons + the GA pixel.
 // - style-src 'self' 'unsafe-inline' — page styles are inline today; tighten
 //   once we move to an external stylesheet
-// - img-src 'self' data: — small inline icons allowed
 // - object-src 'none' — no <object>/<embed> plugins
 // - base-uri 'none' — block <base> tag URL hijacks
 // - frame-ancestors 'none' — clickjacking protection
+const GTAG_INLINE_SHA256 = 'sha256-oMZayXzesR1hateqaVS8Wx5q7j/dmUGohqU6xQnCkHA=';
 const CSP = [
   "default-src 'self'",
+  `script-src 'self' https://www.googletagmanager.com '${GTAG_INLINE_SHA256}'`,
+  "connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com",
+  "img-src 'self' data: https://*.google-analytics.com https://*.googletagmanager.com",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
   "object-src 'none'",
   "base-uri 'none'",
   "frame-ancestors 'none'",

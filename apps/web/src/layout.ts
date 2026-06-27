@@ -526,6 +526,22 @@ function navLink(
   return `<a href="${href}" class="${active === key ? 'active' : ''}">${escapeHtml(label)}</a>`;
 }
 
+// Google Analytics 4. The inline script body is hashed into the CSP
+// (GTAG_INLINE_SHA256 in apps/web/src/index.ts) — any change to the
+// inline content here MUST be matched by a recomputed hash there or the
+// browser will silently refuse to run it. The leading and trailing
+// newlines are part of the hashed payload; do not "tidy" the whitespace.
+const GTAG = `
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-PG9GF2C20Q"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-PG9GF2C20Q');
+</script>
+`;
+
 export function renderLayout(props: LayoutProps): string {
   const heading = props.pageHeading ?? 'hacs-stats';
   const safeSearchVal = escapeHtml(props.searchValue ?? '');
@@ -536,6 +552,7 @@ export function renderLayout(props: LayoutProps): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(props.title)}</title>
   <style>${CSS}</style>
+  ${GTAG}
 </head>
 <body>
   <header class="topbar">
