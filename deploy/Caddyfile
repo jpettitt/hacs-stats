@@ -11,6 +11,15 @@
 #   - Trade-off: CF can't detect an in-flight MITM between CF and origin.
 #     Acceptable for a public read-only stats site.
 
+{
+	# Bind every site to BOTH IPv4 and IPv6. Without this, Caddy's default
+	# resolves to just `[::]` on most Linux distros; when the kernel has
+	# net.ipv6.bindv6only=1 (Debian/Ubuntu default in some configurations)
+	# IPv4 connections can't piggyback on the v6 socket and Cloudflare
+	# (which prefers v4 to origins) hits connection-refused.
+	default_bind 0.0.0.0 ::
+}
+
 hacs-stats.dev {
 	tls internal
 
