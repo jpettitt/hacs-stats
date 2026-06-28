@@ -438,7 +438,15 @@ export function releaseDownloadsForRepo(db: Db, repoId: number, limit = 30): Rel
               THEN ras.download_count
           END
         ), 0) AS downloads,
-        CASE WHEN COUNT(ras.asset_name) > 0 THEN 1 ELSE 0 END AS has_asset
+        -- has_asset is "did we EVER snapshot any asset for this release",
+        -- not "did we snapshot one today". Important when a repo's assets
+        -- weren't part of today's scrape (skipped, partial run, asset
+        -- table truncated) — otherwise the per-release row reads "no
+        -- asset" and the downloads column hides for repos that have
+        -- assets historically.
+        EXISTS (
+          SELECT 1 FROM release_asset_snapshots ras2 WHERE ras2.release_id = rel.id
+        ) AS has_asset
       FROM releases rel
       LEFT JOIN release_asset_snapshots ras
         ON ras.release_id = rel.id AND ras.snapshot_date = (SELECT d FROM latest_date)

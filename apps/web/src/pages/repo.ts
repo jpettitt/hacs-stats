@@ -163,14 +163,35 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
   const downloadsLabel = detail.latest_release_tag
     ? `downloads of ${detail.latest_release_tag}`
     : 'downloads (latest release)';
+  // "Source install" detection — repo has releases but NONE of them have
+  // a tracked asset. HACS clones the repo source for these (typical for
+  // integrations and plugins with content_in_root: true), and GitHub
+  // doesn't expose source-tarball download counts. So we have nothing
+  // to count; surface the reason rather than leaving em-dashes
+  // unexplained.
+  const isSourceInstall = releases.length > 0 && releases.every((r) => r.has_asset === 0);
+  const sourceInstallNote = isSourceInstall
+    ? `<p class="lead small subtitle muted">
+        <strong>Source-install package.</strong> No release asset is
+        attached — HACS installs by cloning the repo. GitHub doesn't
+        expose source-tarball download counts, so we have no install-
+        count metric to show. Star and release activity below are the
+        signals available.
+      </p>`
+    : '';
   const statsGrid = `
     <div class="stat stats-row">
       ${statTile(fmtInt(detail.stars), 'stars')}
       ${statTile(fmtDelta(detail.star_delta_7d), 'stars Δ 7d')}
       ${statTile(fmtDelta(detail.star_delta_30d), 'stars Δ 30d')}
-      ${statTile(fmtDownloads(detail.latest_release_downloads), downloadsLabel)}
-      ${statTile(fmtDownloads(detail.latest_release_downloads_30d), 'new in last 30d')}
-    </div>`;
+      ${
+        isSourceInstall
+          ? ''
+          : `${statTile(fmtDownloads(detail.latest_release_downloads), downloadsLabel)}
+             ${statTile(fmtDownloads(detail.latest_release_downloads_30d), 'new in last 30d')}`
+      }
+    </div>
+    ${sourceInstallNote}`;
 
   // Surfaces the release with the highest 90-day delta on its dominant
   // asset — useful when the most-pulled version isn't the latest tag.
@@ -230,8 +251,19 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
       </table>`
     : '<p class="muted">No releases recorded yet.</p>';
 
+  // "HACS filename" is what hacs.json DECLARES, which isn't the same as
+  // what's attached to GitHub releases. When the repo has releases but
+  // none of them carry this file as an asset, HACS installs by cloning
+  // the source (typical for integrations and plenty of plugins with
+  // content_in_root: true). Annotate so the row doesn't read as "this
+  // is the file we're counting downloads for".
+  const anyReleaseHasAsset = releases.some((r) => r.has_asset === 1);
   const hacsFilename = detail.hacs_filename
-    ? `<code>${escapeHtml(detail.hacs_filename)}</code>`
+    ? `<code>${escapeHtml(detail.hacs_filename)}</code>${
+        releases.length > 0 && !anyReleaseHasAsset
+          ? ' <span class="muted small">— declared in hacs.json but not attached to releases; HACS installs from source</span>'
+          : ''
+      }`
     : '<span class="muted">(none declared; we use the most-downloaded asset per release as the install proxy)</span>';
 
   // For forks, surface what they were forked from so the user can chase
@@ -250,7 +282,7 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
       <tbody>
         <tr><td>Kind</td><td>${kindLabel(detail.kind)}</td></tr>
         ${forkParentRow}
-        <tr><td>HACS asset</td><td>${hacsFilename}</td></tr>
+        <tr><td>HACS filename</td><td>${hacsFilename}</td></tr>
         <tr><td>Default branch</td><td>${escapeHtml(detail.default_branch ?? '—')}</td></tr>
         <tr><td>Last upstream commit</td><td>${fmtDate(detail.last_commit_at)}</td></tr>
         <tr><td>First seen by us</td><td>${fmtDate(detail.first_seen_at)}</td></tr>

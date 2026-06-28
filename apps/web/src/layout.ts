@@ -110,6 +110,14 @@ header.topbar {
   border: 1px solid var(--border);
   border-radius: .5rem;
 }
+header.topbar .brand {
+  /* Flex the heading itself so the "unofficial" badge sits at the
+     wordmark's optical center rather than wherever the h1 line-height
+     drops it (previously it floated above the baseline). */
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+}
 header.topbar .brand a {
   color: var(--text);
   text-decoration: none;
@@ -248,9 +256,9 @@ section > h2 { margin-bottom: .75rem; }
    title="..." was too slow on desktop and invisible on mobile — this CSS
    bubble is immediate on hover and survives a tap on touch devices
    because the span is focusable. */
-.tag[data-tip]  { cursor: help; position: relative; outline: none; }
-.tag[data-tip]:hover::after,
-.tag[data-tip]:focus::after {
+[data-tip] { cursor: help; position: relative; outline: none; }
+[data-tip]:hover::after,
+[data-tip]:focus::after {
   content: attr(data-tip);
   position: absolute;
   left: 0;
@@ -578,7 +586,7 @@ export function renderLayout(props: LayoutProps): string {
 </head>
 <body>
   <header class="topbar">
-    <h1 class="brand"><a href="/"><img class="brand-mark" src="/favicon.svg" alt="" width="28" height="28"> ${escapeHtml(heading)}</a> <span class="badge">unofficial</span></h1>
+    <h1 class="brand"><a href="/"><img class="brand-mark" src="/favicon.svg" alt="" width="28" height="28"> ${escapeHtml(heading)}</a> <span class="badge" tabindex="0" data-tip="hacs-stats is an unofficial, independent dashboard. Not affiliated with HACS (the Home Assistant Community Store) or the HACS maintainers. Data is sourced from public GitHub APIs.">unofficial</span></h1>
     <nav>
       ${navLink('/', 'Home', 'home', props.navActive)}
       ${navLink('/categories', 'Categories', 'categories', props.navActive)}
