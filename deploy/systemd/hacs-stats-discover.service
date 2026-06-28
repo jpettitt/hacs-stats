@@ -1,5 +1,5 @@
 [Unit]
-Description=hacs-stats — weekly discovery sweep (GitHub code-search for hacs.json)
+Description=hacs-stats — weekly discovery sweep (15-band GitHub code-search for hacs.json)
 After=network.target
 Wants=network-online.target
 
@@ -9,10 +9,13 @@ User=hacs-stats
 Group=hacs-stats
 WorkingDirectory=/opt/hacs-stats
 EnvironmentFile=/etc/hacs-stats/env
-# scripts/discover.ts is the manual `pnpm discover` script. Invoked via
-# node-directly (same reasoning as scrape.service: pnpm 11's preflight
-# fights ProtectSystem=strict).
-ExecStart=/usr/bin/node --import tsx scripts/discover.ts
+# scripts/discover-bands.ts walks 15 size-banded queries in one process
+# to break past GitHub's 1000-result code-search cap. The earlier
+# single-query version (scripts/discover.ts) hit the cap on the busy
+# tail of the catalogue and missed most candidates after the first run.
+# Bands take 25-40 min wall-clock; well within the weekly cadence.
+ExecStart=/usr/bin/node --import tsx scripts/discover-bands.ts
+TimeoutStartSec=2700
 StandardOutput=journal
 StandardError=journal
 

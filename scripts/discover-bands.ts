@@ -1,18 +1,36 @@
 #!/usr/bin/env tsx
 /**
- * `pnpm discover:bands` — run discover across size-banded queries so we can
- * break past GitHub's 1000-result cap. Each band is a separate
- * `filename:hacs.json size:LO..HI` search; bands were chosen empirically
- * (see /tmp/probe3.py history) to keep each band comfortably below 1000
- * results.
+ * `pnpm discover:bands` — walk 15 size-banded `filename:hacs.json`
+ * queries to break past GitHub's 1000-result code-search cap. Each band
+ * is empirically sized so its result set stays under 1000.
  *
- * Auto-approve thresholds + AUTOAPPROVE_OFF env are inherited by each band
- * via the spawned `pnpm discover` process.
+ * Runs entirely in one process (no subprocess spawn) so the systemd
+ * unit can invoke it directly without the pnpm-preflight collisions
+ * we hit when each band was a separate `pnpm discover` call.
  *
- * Bands run sequentially — GitHub's code-search limit (30/min) is global
- * across the token, so parallelising bands just buys us 429s.
+ * Inter-band sleep keeps us under GitHub's 30-req/min code-search
+ * limit while still finishing the whole sweep in 25-40 min.
+ *
+ * Env knobs mirror discover.ts (AUTOAPPROVE_*, DISCOVERY_MAX_PAGES).
+ * BANDS_SLEEP_SEC tunes the inter-band pause (default 65s).
  */
-import { spawn } from 'node:child_process';
+import { openDb, resolveDatabasePath, runMigrations } from '@hacs-stats/db';
+import {
+  loadAlreadyKnown,
+  loadKnownOwners,
+  readAutoApproveEnv,
+  runOneSweep,
+} from './_discover-core.js';
+
+const DATABASE_PATH = resolveDatabasePath();
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const MAX_PAGES = Number(process.env.DISCOVERY_MAX_PAGES ?? 10);
+const SLEEP_SEC = Number(process.env.BANDS_SLEEP_SEC ?? 65);
+
+if (!GITHUB_TOKEN) {
+  console.error('[bands] GITHUB_TOKEN required');
+  process.exit(2);
+}
 
 const BANDS = [
   'size:<40',
@@ -32,39 +50,72 @@ const BANDS = [
   'size:>500',
 ];
 
-function runBand(band: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const query = `filename:hacs.json ${band}`;
-    console.log(`\n========== ${query} ==========`);
-    const child = spawn('pnpm', ['discover'], {
-      stdio: 'inherit',
-      env: { ...process.env, DISCOVERY_QUERY: query },
-    });
-    child.on('exit', (code) => {
-      if (code === 0) resolve(code);
-      else reject(new Error(`band ${band} exited ${code}`));
-    });
-    child.on('error', reject);
-  });
-}
-
 async function main(): Promise<void> {
+  const db = openDb({ path: DATABASE_PATH });
+  runMigrations(db);
+
+  const alreadyKnown = loadAlreadyKnown(db);
+  const knownOwners = loadKnownOwners(db);
+  const autoApprove = readAutoApproveEnv();
+
+  console.log(`[bands] walking ${BANDS.length} size bands`);
+  console.log(`[bands] starting — ${alreadyKnown.size} already-known repos to skip`);
+  console.log(
+    `[bands] autoApprove: ${
+      autoApprove.off
+        ? 'OFF'
+        : `stars >= ${autoApprove.minStars} (or >= ${autoApprove.knownOwnerMinStars} for the ${knownOwners.size} trusted owners) AND pushed within last ${autoApprove.maxAgeMonths} months`
+    }`,
+  );
+  console.log(`[bands] DB: ${DATABASE_PATH}`);
+  console.log(`[bands] inter-band sleep: ${SLEEP_SEC}s`);
+
+  const totals = {
+    inspected: 0,
+    autoApproved: 0,
+    queued: 0,
+    rejectedStale: 0,
+    rejectedZeroStars: 0,
+  };
+
   for (let i = 0; i < BANDS.length; i++) {
     const band = BANDS[i];
-    if (!band) continue;
-    await runBand(band);
-    // Between bands: code-search is 30/min, and each band can burn many
-    // search slots (up to 10 search pages + per-candidate raw fetches).
-    // 65s lets the bucket refill before the next band starts.
-    if (i < BANDS.length - 1) {
-      console.log('[discover-bands] sleeping 65s before next band…');
-      await new Promise((r) => setTimeout(r, 65_000));
+    const query = `filename:hacs.json ${band}`;
+    console.log(`\n[bands] ${i + 1}/${BANDS.length} — ${query}`);
+    try {
+      const c = await runOneSweep(
+        db,
+        query,
+        GITHUB_TOKEN,
+        MAX_PAGES,
+        alreadyKnown,
+        knownOwners,
+        autoApprove,
+      );
+      totals.inspected += c.inspected;
+      totals.autoApproved += c.autoApproved;
+      totals.queued += c.queued;
+      totals.rejectedStale += c.rejectedStale;
+      totals.rejectedZeroStars += c.rejectedZeroStars;
+      console.log(
+        `[bands]   inspected=${c.inspected} auto=${c.autoApproved} queue=${c.queued} stale=${c.rejectedStale} zero=${c.rejectedZeroStars}`,
+      );
+    } catch (err) {
+      // Don't abort the whole sweep on a single transient failure — log
+      // and continue. Common cause: ETIMEDOUT on a single REST call.
+      console.error(`[bands] band "${band}" FAILED:`, (err as Error).message);
+    }
+    if (i < BANDS.length - 1 && SLEEP_SEC > 0) {
+      console.log(`[bands] sleeping ${SLEEP_SEC}s before next band…`);
+      await new Promise((r) => setTimeout(r, SLEEP_SEC * 1000));
     }
   }
-  console.log('\n[discover-bands] all bands done');
+
+  console.log('\n[bands] totals:', totals);
+  db.close();
 }
 
 main().catch((err) => {
-  console.error('[discover-bands] failed:', err);
+  console.error('[bands] failed:', err);
   process.exit(1);
 });
