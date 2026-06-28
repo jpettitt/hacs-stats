@@ -55,7 +55,13 @@ const LEADER_SELECT = `
     r.first_seen_at, r.last_scraped_at, r.state, r.first_failure_at,
     COALESCE(latest.stars, 0)                         AS stars,
     latest.last_commit_at,
-    lr.latest_release_at,
+    -- Correlated subquery (not a grouped JOIN): SQLite pushes the
+    -- r.id predicate in and uses idx_releases_repo_published for an
+    -- index-only MAX. With a JOIN-grouped subquery instead, the
+    -- aggregation ran over the whole releases table per outer
+    -- query — fine for full leaderboards, catastrophic for the
+    -- single-repo detail page (2-3s on 40k+ release rows).
+    (SELECT MAX(published_at) FROM releases WHERE repo_id = r.id) AS latest_release_at,
     COALESCE(sc.latest_release_downloads, 0)          AS latest_release_downloads,
     sc.latest_release_tag,
     COALESCE(sc.latest_release_downloads_30d, 0)      AS latest_release_downloads_30d,
@@ -72,11 +78,6 @@ const LEADER_SELECT = `
     FROM repo_snapshots
     WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM repo_snapshots)
   ) latest ON latest.repo_id = r.id
-  LEFT JOIN (
-    SELECT repo_id, MAX(published_at) AS latest_release_at
-    FROM releases
-    GROUP BY repo_id
-  ) lr ON lr.repo_id = r.id
 `;
 
 // All default leaderboard queries filter to state='active' and
@@ -165,8 +166,9 @@ export function recentlyUpdated(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
       `${LEADER_SELECT}
-        WHERE ${ACTIVE_ONLY} AND lr.latest_release_at IS NOT NULL
-        ORDER BY lr.latest_release_at DESC
+        WHERE ${ACTIVE_ONLY}
+          AND EXISTS (SELECT 1 FROM releases WHERE repo_id = r.id)
+        ORDER BY latest_release_at DESC
         LIMIT ?`,
     )
     .all(limit);
@@ -262,7 +264,7 @@ const ORDER_BY_BY_SORT: Record<SearchSort, string> = {
   // dominate and the metric matches the home "Recent releases"
   // section. Repos with no releases sort to the bottom (NULLs last
   // via the explicit NULLS LAST clause SQLite added in 3.30+).
-  recent: 'lr.latest_release_at DESC NULLS LAST, r.full_name COLLATE NOCASE ASC',
+  recent: 'latest_release_at DESC NULLS LAST, r.full_name COLLATE NOCASE ASC',
   new: 'r.first_seen_at DESC, r.id DESC',
 };
 
