@@ -11,6 +11,12 @@ export interface ReleaseAsset {
 
 export interface ReleaseRecord {
   tag: string;
+  /** GitHub release name field — what the author typed in the "Release
+   * title" box. Often empty (then tag is the only label). */
+  name: string | null;
+  /** Release notes markdown body. Used to extract a display title when
+   * `name` is empty (first heading or first 60 chars). */
+  body: string | null;
   publishedAt: string;
   isPrerelease: boolean;
   htmlUrl: string;
@@ -100,6 +106,8 @@ export async function fetchReleases(opts: FetchReleasesOptions): Promise<FetchRe
 
     const body = (await res.json()) as Array<{
       tag_name: string;
+      name: string | null;
+      body: string | null;
       published_at: string | null;
       prerelease: boolean;
       html_url: string;
@@ -111,6 +119,8 @@ export async function fetchReleases(opts: FetchReleasesOptions): Promise<FetchRe
       if (!r.published_at) continue;
       collected.push({
         tag: r.tag_name,
+        name: r.name,
+        body: r.body,
         publishedAt: r.published_at,
         isPrerelease: r.prerelease,
         htmlUrl: r.html_url,

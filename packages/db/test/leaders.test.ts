@@ -136,14 +136,28 @@ describe('leaders.newArrivals + recentlyUpdated', () => {
     expect(r[0]?.full_name).toBe('newest/newest');
   });
 
-  it('recentlyUpdated only includes repos with a last_commit_at', () => {
+  it('recentlyUpdated orders by most-recent release and excludes repos with no releases', () => {
     const db = freshDb();
     const a = seedRepo(db, 'a', 'a');
     const b = seedRepo(db, 'b', 'b');
-    seedStats(db, a, { last_commit: '2026-06-21T00:00:00Z' });
-    seedStats(db, b, { last_commit: null });
+    const c = seedRepo(db, 'c', 'c');
+    releases.upsertRelease(db, {
+      repoId: a,
+      tag: 'v1',
+      publishedAt: '2026-06-10T00:00:00Z',
+      isPrerelease: false,
+      htmlUrl: '',
+    });
+    releases.upsertRelease(db, {
+      repoId: c,
+      tag: 'v2',
+      publishedAt: '2026-06-25T00:00:00Z',
+      isPrerelease: true, // prereleases count
+      htmlUrl: '',
+    });
+    // b has no releases at all — should be excluded.
     const r = leaders.recentlyUpdated(db, 10);
-    expect(r.map((x) => x.full_name)).toEqual(['a/a']);
+    expect(r.map((x) => x.full_name)).toEqual(['c/c', 'a/a']);
   });
 });
 
@@ -235,10 +249,13 @@ describe('leaders.releaseDownloadsForRepo', () => {
     expect(rows).toEqual([
       {
         tag: 'v1',
+        name: null,
+        body: null,
         published_at: '2026-06-21T00:00:00Z',
         is_prerelease: 0,
         html_url: 'https://example/v1',
         downloads: 1000,
+        has_asset: 1,
       },
     ]);
   });
@@ -345,12 +362,26 @@ describe('leaders.searchRepos (with sort + kind filter)', () => {
     expect(hits[0]?.latest_release_downloads).toBe(9999);
   });
 
-  it('sort=recent orders by latest.last_commit_at DESC', () => {
+  it('sort=recent orders by most-recent release published_at DESC', () => {
     const db = freshDb();
     const a = seedRepo(db, 'a', 'a');
     const b = seedRepo(db, 'b', 'b');
-    seedStats(db, a, { stars: 1, last_commit: '2026-06-01T00:00:00Z' });
-    seedStats(db, b, { stars: 1, last_commit: '2026-06-20T00:00:00Z' });
+    seedStats(db, a, { stars: 1 });
+    seedStats(db, b, { stars: 1 });
+    releases.upsertRelease(db, {
+      repoId: a,
+      tag: 'v1',
+      publishedAt: '2026-06-01T00:00:00Z',
+      isPrerelease: false,
+      htmlUrl: '',
+    });
+    releases.upsertRelease(db, {
+      repoId: b,
+      tag: 'v1',
+      publishedAt: '2026-06-20T00:00:00Z',
+      isPrerelease: false,
+      htmlUrl: '',
+    });
     const hits = leaders.searchRepos(db, { q: '', sort: 'recent' }).rows;
     expect(hits.map((r) => r.full_name)).toEqual(['b/b', 'a/a']);
   });

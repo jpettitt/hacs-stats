@@ -43,10 +43,13 @@ export interface RepoDetailViewModel {
   };
   releases: Array<{
     tag: string;
+    name: string | null;
+    body: string | null;
     published_at: string;
     is_prerelease: number;
     html_url: string;
     downloads: number;
+    has_asset: number;
   }>;
   /** Other repos in the catalogue owned by the same GitHub owner. Empty
    * when this is the only one (the page renders a sibling-count line, no
@@ -57,6 +60,30 @@ export interface RepoDetailViewModel {
 function fmtDate(iso: string | null): string {
   if (!iso) return '—';
   return escapeHtml(iso.slice(0, 10));
+}
+
+/**
+ * Derive a human-readable release title:
+ *   1. GitHub release "name" field if the author set one.
+ *   2. First `# Heading` line from the body if present.
+ *   3. First 60 chars of the body (whitespace-collapsed).
+ *   4. Empty string — caller shows only the tag.
+ *
+ * Returns plain text (the caller escapes for HTML context).
+ */
+function deriveReleaseTitle(name: string | null, body: string | null): string {
+  if (name && name.trim().length > 0) return name.trim();
+  if (!body) return '';
+  // Look for the FIRST line beginning with # (one or more). Skips blank
+  // lines and other text above it — common when the body starts with a
+  // header. Capped at 80 chars so a stuffed-into-the-title sentence
+  // doesn't blow out the column.
+  const headingMatch = body.match(/^[ \t]*#{1,6}[ \t]+(.+?)[ \t]*$/m);
+  if (headingMatch?.[1]) return headingMatch[1].trim().slice(0, 80);
+  // No heading — take the first 60 chars of the collapsed body.
+  const collapsed = body.replace(/\s+/g, ' ').trim();
+  if (collapsed.length === 0) return '';
+  return collapsed.length > 60 ? `${collapsed.slice(0, 59).trimEnd()}…` : collapsed;
 }
 
 export function renderRepoDetail(vm: RepoDetailViewModel): string {
@@ -168,6 +195,11 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
     zeroBase: !starsSeries.truncated,
   });
 
+  // Hide the downloads column entirely when NO release in this list has
+  // a tracked asset — install-from-source repos (most HACS integrations)
+  // have no assets attached to their releases and a column of em-dashes
+  // is just noise.
+  const anyDownloads = releases.some((r) => r.has_asset === 1);
   const releaseRows = releases
     .map((r) => {
       // html_url is from GitHub; we trust it but still escape for attribute context.
@@ -175,17 +207,25 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
       // through because they're constrained to https://github.com/owner/repo/...
       // when the owner/repo passed the strict allow-list. We escape as a belt.
       const safeHtmlUrl = escapeHtml(r.html_url);
+      const title = deriveReleaseTitle(r.name, r.body);
+      const titleCell = title ? `<div class="muted small">${escapeHtml(title)}</div>` : '';
+      const downloadCell = anyDownloads
+        ? `<td class="num">${escapeHtml(r.has_asset === 1 ? fmtInt(r.downloads) : '—')}</td>`
+        : '';
       return `<tr>
-        <td><a href="${safeHtmlUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(r.tag)}</a>${r.is_prerelease ? ' <span class="muted small">pre</span>' : ''}</td>
+        <td>
+          <a href="${safeHtmlUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(r.tag)}</a>${r.is_prerelease ? ' <span class="muted small">pre</span>' : ''}
+          ${titleCell}
+        </td>
         <td>${fmtDate(r.published_at)}</td>
-        <td class="num">${escapeHtml(fmtInt(r.downloads))}</td>
+        ${downloadCell}
       </tr>`;
     })
     .join('');
 
   const releasesTable = releases.length
     ? `<table>
-        <thead><tr><th>Tag</th><th>Published</th><th class="num">Downloads (latest snapshot)</th></tr></thead>
+        <thead><tr><th>Release</th><th>Published</th>${anyDownloads ? '<th class="num">Downloads (latest snapshot)</th>' : ''}</tr></thead>
         <tbody>${releaseRows}</tbody>
       </table>`
     : '<p class="muted">No releases recorded yet.</p>';

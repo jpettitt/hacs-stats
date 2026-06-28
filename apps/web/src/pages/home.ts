@@ -92,16 +92,16 @@ export function renderHome(props: HomeProps): string {
     </section>
 
     <section>
-      <h2>Recently active ${moreLink('recent')}</h2>
-      <p class="lead small">Most recent commit on the default branch.</p>
+      <h2>Recent releases ${moreLink('recent')}</h2>
+      <p class="lead small">Most-recently-published release (including prereleases).</p>
       <table>
-        <thead><tr><th>Repo</th><th class="desc-col">Description</th><th class="num">Last commit</th><th class="num">Stars</th></tr></thead>
+        <thead><tr><th>Repo</th><th class="desc-col">Description</th><th class="num">Last release</th><th class="num">Stars</th></tr></thead>
         <tbody>${recentlyUpdated
           .map(
             (r) => `<tr>
               <td>${repoLink(r.full_name, r.hacs_name)}${kindBadge(r.kind)}${repoTags(r)}</td>
               ${descCell(r.description)}
-              <td class="num small">${fmtDate(r.last_commit_at)}</td>
+              <td class="num small">${fmtDate(r.latest_release_at ?? null)}</td>
               <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
             </tr>`,
           )

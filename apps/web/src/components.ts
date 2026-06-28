@@ -32,6 +32,10 @@ export interface RowForList {
   description?: string | null;
   last_commit_at?: string | null;
   first_seen_at?: string;
+  /** Most-recent release published_at (any release, prereleases included).
+   * Surfaced on the home "Recent releases" section and the
+   * /search?sort=recent column. */
+  latest_release_at?: string | null;
 }
 
 const KIND_LABEL: Record<string, string> = {

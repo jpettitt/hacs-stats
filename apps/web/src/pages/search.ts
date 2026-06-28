@@ -15,7 +15,7 @@ export const SORT_OPTIONS = [
   { value: 'stars', label: 'Stars (high to low)' },
   { value: 'downloads', label: 'Downloads (latest release)' },
   { value: 'trending', label: 'Trending (stars Δ 30d)' },
-  { value: 'recent', label: 'Recently active' },
+  { value: 'recent', label: 'Recent releases' },
   { value: 'new', label: 'New arrivals' },
 ] as const;
 
@@ -68,7 +68,7 @@ function secondaryValueForSort(r: RowForList, sort: SortValue): string {
           : ''
       }`;
     case 'recent':
-      return r.last_commit_at ? escapeHtml(r.last_commit_at.slice(0, 10)) : '—';
+      return r.latest_release_at ? escapeHtml(r.latest_release_at.slice(0, 10)) : '—';
     case 'new':
       return escapeHtml((r.first_seen_at ?? '').slice(0, 10));
     default:
@@ -83,7 +83,7 @@ function secondaryLabelForSort(sort: SortValue): string {
     case 'downloads':
       return 'Downloads';
     case 'recent':
-      return 'Last commit';
+      return 'Last release';
     case 'new':
       return 'First seen';
     default:

@@ -43,6 +43,10 @@ export interface LeaderRow {
   top_version_30d: string | null;
   first_seen_at: string;
   last_commit_at: string | null;
+  /** Most-recent release published_at (any release, prereleases included).
+   * Populated only by queries that JOIN releases — undefined otherwise.
+   * Surfaced on the home "Recent releases" section. */
+  latest_release_at?: string | null;
 }
 
 const LEADER_SELECT = `
@@ -51,6 +55,7 @@ const LEADER_SELECT = `
     r.first_seen_at, r.last_scraped_at, r.state, r.first_failure_at,
     COALESCE(latest.stars, 0)                         AS stars,
     latest.last_commit_at,
+    lr.latest_release_at,
     COALESCE(sc.latest_release_downloads, 0)          AS latest_release_downloads,
     sc.latest_release_tag,
     COALESCE(sc.latest_release_downloads_30d, 0)      AS latest_release_downloads_30d,
@@ -67,6 +72,11 @@ const LEADER_SELECT = `
     FROM repo_snapshots
     WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM repo_snapshots)
   ) latest ON latest.repo_id = r.id
+  LEFT JOIN (
+    SELECT repo_id, MAX(published_at) AS latest_release_at
+    FROM releases
+    GROUP BY repo_id
+  ) lr ON lr.repo_id = r.id
 `;
 
 // All default leaderboard queries filter to state='active' and
@@ -143,15 +153,20 @@ export function newArrivals(db: Db, limit = 20): LeaderRow[] {
 }
 
 /**
- * Recently active upstream — last_commit_at comes from the default-branch
- * HEAD commit date via GraphQL.
+ * Recent releases — repos with the most-recently-published release
+ * (prereleases included; "I just shipped a release candidate" counts
+ * as activity worth surfacing). Replaced the older "recently active"
+ * (default-branch commit time) signal: a fresh commit on main isn't
+ * the same as a fresh release, and the surfaced repos felt arbitrary
+ * (every dependabot bump qualified). Most-recent release is the
+ * cleaner "this project just shipped something" signal.
  */
 export function recentlyUpdated(db: Db, limit = 20): LeaderRow[] {
   return db.raw
     .prepare<[number], LeaderRow>(
       `${LEADER_SELECT}
-        WHERE ${ACTIVE_ONLY} AND latest.last_commit_at IS NOT NULL
-        ORDER BY latest.last_commit_at DESC
+        WHERE ${ACTIVE_ONLY} AND lr.latest_release_at IS NOT NULL
+        ORDER BY lr.latest_release_at DESC
         LIMIT ?`,
     )
     .all(limit);
@@ -225,7 +240,7 @@ export const SEARCH_SORT_LABELS: Record<SearchSort, string> = {
   stars: 'Stars (high to low)',
   downloads: 'Downloads (latest release)',
   trending: 'Trending (30d downloads delta)',
-  recent: 'Recently active',
+  recent: 'Recent releases',
   new: 'New arrivals',
 };
 
@@ -242,7 +257,12 @@ const ORDER_BY_BY_SORT: Record<SearchSort, string> = {
   // "Trending" section (star delta) — clicking "See all" from there
   // dropped users into a list sorted by something else entirely.
   trending: 'star_delta_30d DESC, stars DESC, r.full_name COLLATE NOCASE ASC',
-  recent: 'latest.last_commit_at DESC, r.full_name COLLATE NOCASE ASC',
+  // "recent" used to be default-branch last-commit time; switched to
+  // most-recent release published_at so dependabot bumps don't
+  // dominate and the metric matches the home "Recent releases"
+  // section. Repos with no releases sort to the bottom (NULLs last
+  // via the explicit NULLS LAST clause SQLite added in 3.30+).
+  recent: 'lr.latest_release_at DESC NULLS LAST, r.full_name COLLATE NOCASE ASC',
   new: 'r.first_seen_at DESC, r.id DESC',
 };
 
@@ -378,10 +398,22 @@ export function repoStarsTimeseries(
  */
 export interface ReleaseDownloadRow {
   tag: string;
+  /** GitHub release "title" field. Null when the author left it blank
+   * (which is most of the time). UI extracts a display title from
+   * `body` in that case. */
+  name: string | null;
+  /** Markdown body. UI uses it to derive a display title when `name`
+   * is null. Stored full; the UI does its own excerpting. */
+  body: string | null;
   published_at: string;
   is_prerelease: number;
   html_url: string;
   downloads: number;
+  /** True when ANY asset snapshot exists for this release. Distinct
+   * from `downloads = 0` (which can also mean "asset exists but no
+   * one downloaded") — install-from-source repos have NO assets and
+   * the UI hides the downloads column entirely for those. */
+  has_asset: number;
 }
 
 export function releaseDownloadsForRepo(db: Db, repoId: number, limit = 30): ReleaseDownloadRow[] {
@@ -398,14 +430,15 @@ export function releaseDownloadsForRepo(db: Db, repoId: number, limit = 30): Rel
         SELECT hacs_filename FROM repos WHERE id = ?
       )
       SELECT
-        rel.tag, rel.published_at, rel.is_prerelease, rel.html_url,
+        rel.tag, rel.name, rel.body, rel.published_at, rel.is_prerelease, rel.html_url,
         COALESCE(MAX(
           CASE
             WHEN (SELECT hacs_filename FROM hacs_filter) IS NULL
               OR ras.asset_name = (SELECT hacs_filename FROM hacs_filter)
               THEN ras.download_count
           END
-        ), 0) AS downloads
+        ), 0) AS downloads,
+        CASE WHEN COUNT(ras.asset_name) > 0 THEN 1 ELSE 0 END AS has_asset
       FROM releases rel
       LEFT JOIN release_asset_snapshots ras
         ON ras.release_id = rel.id AND ras.snapshot_date = (SELECT d FROM latest_date)

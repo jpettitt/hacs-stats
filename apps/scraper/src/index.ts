@@ -329,6 +329,8 @@ async function ingest(): Promise<IngestResult> {
           const releaseId = releases.upsertRelease(db, {
             repoId: r.id,
             tag: rel.tag,
+            name: rel.name,
+            body: rel.body,
             publishedAt: rel.publishedAt,
             isPrerelease: rel.isPrerelease,
             htmlUrl: rel.htmlUrl,
