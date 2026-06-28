@@ -1,4 +1,11 @@
-import { discoveryQueue, leaders, openDb, repos, resolveDatabasePath } from '@hacs-stats/db';
+import {
+  discoveryQueue,
+  leaders,
+  openDb,
+  repos,
+  resolveDatabasePath,
+  starHistory,
+} from '@hacs-stats/db';
 import type { RepoKind } from '@hacs-stats/shared';
 import { REPO_KINDS } from '@hacs-stats/shared';
 import { serve } from '@hono/node-server';
@@ -34,6 +41,31 @@ const rwDb = openDb({ path: DATABASE_PATH, mode: 'readwrite' });
 
 const VALID_KINDS = new Set<string>(REPO_KINDS);
 const isRepoKind = (s: string): s is RepoKind => VALID_KINDS.has(s);
+
+/** Days of star-history the chart shows. Data older than this is kept
+ * in the DB (the scraper accumulates forever) but trimmed from the
+ * rendered curve so the chart's x-axis stays legible. */
+const STAR_HISTORY_DISPLAY_DAYS = 365 * 3;
+
+/**
+ * Star series for one repo's detail page. Prefers the
+ * repo_star_history table (full curve back to repo creation, fed by the
+ * scraper's step 2.5), and falls back to the last 30 daily snapshots
+ * when history hasn't been built yet (newly-added repos before their
+ * first star-history scrape). Trims to the last 3y for display.
+ */
+function starsSeriesForRepo(repoId: number): Array<{ date: string; value: number }> {
+  const history = starHistory.repoStarHistory(db, repoId);
+  if (history.length > 0) {
+    const cutoff = new Date(Date.now() - STAR_HISTORY_DISPLAY_DAYS * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    return history
+      .filter((p) => p.day >= cutoff)
+      .map((p) => ({ date: p.day, value: p.cumulative }));
+  }
+  return leaders.repoStarsTimeseries(db, repoId, 30).map((p) => ({ date: p.date, value: p.stars }));
+}
 
 const app = new Hono();
 
@@ -175,9 +207,7 @@ app.get('/r/:owner/:name', (c) => {
       404,
     );
   }
-  const starsSeries = leaders
-    .repoStarsTimeseries(db, detail.id, 30)
-    .map((p) => ({ date: p.date, value: p.stars }));
+  const starsSeries = starsSeriesForRepo(detail.id);
   const releaseRows = leaders.releaseDownloadsForRepo(db, detail.id, 25);
   const relatedRepos = repos.listRepoIdentsByOwner(db, owner, fullName);
   const body = renderRepoDetail({
@@ -572,7 +602,7 @@ app.get('/api/repo/:owner/:name', (c) => {
   if (!detail) return c.json({ error: 'not found' }, 404);
   return c.json({
     repo: detail,
-    starsSeries: leaders.repoStarsTimeseries(db, detail.id, 30),
+    starsSeries: starsSeriesForRepo(detail.id),
     releases: leaders.releaseDownloadsForRepo(db, detail.id, 25),
   });
 });

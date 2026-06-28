@@ -15,11 +15,19 @@ import { RateLimitGuard } from './rate-limit.js';
 import { applyRetention } from './retention.js';
 import { computeStatsCache } from './rollup.js';
 import { todayUtcIsoDate } from './snapshot-date.js';
+import { fetchAndStoreStarHistory } from './stargazers.js';
 
 const DATABASE_PATH = resolveDatabasePath();
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const MANIFEST_CONCURRENCY = Number(process.env.MANIFEST_CONCURRENCY ?? 12);
 const RELEASES_CONCURRENCY = Number(process.env.RELEASES_CONCURRENCY ?? 12);
+// Star-history step (new in 2026-06). Lower concurrency than releases —
+// each repo can spawn up to MAX_STARGAZER_PAGES_PER_SCRAPE serialised
+// REST calls when it has a backlog. The cap exists so a never-tracked
+// 40k-star repo doesn't burn 400 calls in one scrape; instead the
+// backfill spreads over (40000 / 100 / cap) scrapes.
+const STARGAZER_CONCURRENCY = Number(process.env.STARGAZER_CONCURRENCY ?? 6);
+const MAX_STARGAZER_PAGES_PER_SCRAPE = Number(process.env.MAX_STARGAZER_PAGES_PER_SCRAPE ?? 20);
 // `process.env.SCRAPE_LIMIT ? …` would treat '0' as truthy (non-empty string)
 // AND `0` as falsy after Number(), then `LIMIT 0` would silently become "no
 // limit" — exactly the surprising behaviour we DON'T want. Explicitly check
@@ -157,6 +165,9 @@ async function ingest(): Promise<IngestResult> {
     let movedToRemoved = 0;
     const fullNameToId = new Map(allRepos.map((r) => [r.full_name, r.id]));
     const idents = allRepos.map((r) => ({ owner: r.owner, name: r.name }));
+    // Collected in step 2's success path; fed to step 2.5 (star history)
+    // so we only star-history-fetch repos that GraphQL succeeded on.
+    const starsForHistory: Array<{ repoId: number; fullName: string; stars: number }> = [];
 
     for await (const batch of fetchRepoMetadataBatches(idents, { token: GITHUB_TOKEN, guard })) {
       batchesFetched++;
@@ -227,6 +238,13 @@ async function ingest(): Promise<IngestResult> {
           });
           repos.markRepoSuccess(db, repoId);
           snapshotsWritten++;
+          // Capture for step 2.5 (star history). Using m.canonicalFullName
+          // when present so a renamed repo's history goes to the right row.
+          starsForHistory.push({
+            repoId,
+            fullName: m.canonicalFullName ?? m.fullName,
+            stars: m.stars,
+          });
         }
       });
       writeBatch(batch);
@@ -236,6 +254,43 @@ async function ingest(): Promise<IngestResult> {
       `[scrape]   ${snapshotsWritten} snapshots written, ${missing} repos missing, ` +
         `${purged} pending-fail purged, ${movedToOffline}→offline, ${movedToRemoved}→removed, ` +
         `${renamed} renamed via redirect, ${dedupedRedirects} duplicates deduped`,
+    );
+
+    // --- Step 2.5: per-day star history --------------------------------
+    // Brings repo_star_history up to date from /stargazers. Cheap when
+    // delta=0 (the common case) — zero REST calls. New repos and
+    // ones with backlog page-back up to MAX_STARGAZER_PAGES_PER_SCRAPE.
+    console.log(
+      `[scrape] step 2.5 — star history for ${starsForHistory.length} repos (concurrency ${STARGAZER_CONCURRENCY}, cap ${MAX_STARGAZER_PAGES_PER_SCRAPE} pages/repo)`,
+    );
+    let starHistoryUpdated = 0;
+    let starHistoryNoOp = 0;
+    let starHistoryPagesTotal = 0;
+    let starHistoryTruncated = 0;
+    let starHistoryFailed = 0;
+    await mapLimit(starsForHistory, STARGAZER_CONCURRENCY, async (s) => {
+      try {
+        await guard.waitIfNeeded();
+        const result = await fetchAndStoreStarHistory(db, s.repoId, s.fullName, s.stars, {
+          token: GITHUB_TOKEN,
+          maxPagesPerScrape: MAX_STARGAZER_PAGES_PER_SCRAPE,
+          nowDay: today,
+        });
+        if (result.pagesFetched === 0 && result.deltaApplied === 0) {
+          starHistoryNoOp++;
+        } else {
+          starHistoryUpdated++;
+          starHistoryPagesTotal += result.pagesFetched;
+          if (result.truncatedByCap) starHistoryTruncated++;
+        }
+      } catch {
+        // Soft-fail per repo so one bad call doesn't take down the step.
+        // Next scrape retries.
+        starHistoryFailed++;
+      }
+    });
+    console.log(
+      `[scrape]   ${starHistoryUpdated} updated (${starHistoryPagesTotal} pages, ${starHistoryTruncated} hit the per-scrape cap), ${starHistoryNoOp} no-op, ${starHistoryFailed} failed`,
     );
 
     // --- Phase 3 step B: REST releases → releases + release_asset_snapshots -
