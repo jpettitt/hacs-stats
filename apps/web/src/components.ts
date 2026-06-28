@@ -48,6 +48,19 @@ export function fmtInt(n: number): string {
   return n.toLocaleString('en-US');
 }
 
+/**
+ * Display formatter for the downloads column. Renders '—' for zero so
+ * the row doesn't read as "this repo has zero installs" when really we
+ * have no install signal at all — HACS integrations that install from
+ * source clone have no GitHub release assets to count, and GitHub
+ * doesn't expose source-tarball download counts. The underlying value
+ * is still 0, so DB-level sorts put these rows at the bottom of
+ * "by downloads" naturally.
+ */
+export function fmtDownloads(n: number): string {
+  return n === 0 ? '—' : fmtInt(n);
+}
+
 export function fmtDelta(n: number): string {
   if (n === 0) return '—';
   const sign = n > 0 ? '+' : '';

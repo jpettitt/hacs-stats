@@ -1,4 +1,4 @@
-import { fmtDelta, fmtInt, kindLabel, repoTags } from '../components.js';
+import { fmtDelta, fmtDownloads, fmtInt, kindLabel, repoTags } from '../components.js';
 import { escapeHtml, safeGithubRepoUrl } from '../sanitize.js';
 import { renderLineChart } from '../svg-chart.js';
 
@@ -141,8 +141,8 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
       ${statTile(fmtInt(detail.stars), 'stars')}
       ${statTile(fmtDelta(detail.star_delta_7d), 'stars Δ 7d')}
       ${statTile(fmtDelta(detail.star_delta_30d), 'stars Δ 30d')}
-      ${statTile(fmtInt(detail.latest_release_downloads), downloadsLabel)}
-      ${statTile(fmtInt(detail.latest_release_downloads_30d), 'new in last 30d')}
+      ${statTile(fmtDownloads(detail.latest_release_downloads), downloadsLabel)}
+      ${statTile(fmtDownloads(detail.latest_release_downloads_30d), 'new in last 30d')}
     </div>`;
 
   // Surfaces the release with the highest 90-day delta on its dominant

@@ -1,6 +1,7 @@
 import {
   type RowForList,
   fmtDelta,
+  fmtDownloads,
   fmtInt,
   kindLabel,
   renderLeaderTable,
@@ -61,7 +62,7 @@ function secondaryValueForSort(r: RowForList, sort: SortValue): string {
     case 'downloads':
       // Version on its own line so digits align in the column (matches
       // the home "Top by downloads" treatment).
-      return `${escapeHtml(fmtInt(r.latest_release_downloads ?? 0))}${
+      return `${escapeHtml(fmtDownloads(r.latest_release_downloads ?? 0))}${
         r.latest_release_tag
           ? `<br><span class="muted small">${escapeHtml(r.latest_release_tag)}</span>`
           : ''

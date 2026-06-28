@@ -1,6 +1,7 @@
 import {
   type RowForList,
   fmtDelta,
+  fmtDownloads,
   fmtInt,
   kindBadge,
   renderLeaderTable,
@@ -73,7 +74,7 @@ export function renderHome(props: HomeProps): string {
         // right-aligned across rows (variable-length tags like "v0.13.0"
         // vs "v5" otherwise push numbers to different columns).
         formatSecondary: (r) =>
-          `${escapeHtml(fmtInt(r.latest_release_downloads ?? 0))}${
+          `${escapeHtml(fmtDownloads(r.latest_release_downloads ?? 0))}${
             r.latest_release_tag
               ? `<br><span class="muted small">${escapeHtml(r.latest_release_tag)}</span>`
               : ''

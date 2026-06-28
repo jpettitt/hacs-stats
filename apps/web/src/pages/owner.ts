@@ -1,4 +1,4 @@
-import { fmtInt, kindBadge, repoTags } from '../components.js';
+import { fmtDownloads, fmtInt, kindBadge, repoTags } from '../components.js';
 import { escapeHtml } from '../sanitize.js';
 
 export interface OwnerRow {
@@ -42,7 +42,7 @@ export function renderOwnerPage(props: OwnerPageProps): string {
           : ` <span class="badge badge-${escapeHtml(r.state)}">${escapeHtml(r.state)}</span>`;
       const desc = r.description ? escapeHtml(r.description) : '';
       const releaseDl = r.latest_release_tag
-        ? `${fmtInt(r.latest_release_downloads)} <span class="muted small">(${escapeHtml(r.latest_release_tag)})</span>`
+        ? `${fmtDownloads(r.latest_release_downloads)} <span class="muted small">(${escapeHtml(r.latest_release_tag)})</span>`
         : '<span class="muted">—</span>';
       return `<tr>
         <td>
