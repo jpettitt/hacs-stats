@@ -18,13 +18,13 @@
     "format": "biome format --write .",
     "dev:web": "pnpm --filter @hacs-stats/web dev",
     "dev:scraper": "pnpm --filter @hacs-stats/scraper dev",
-    "migrate": "tsx scripts/migrate.ts",
-    "seed": "tsx scripts/seed.ts",
-    "discover": "tsx --env-file-if-exists=.env scripts/discover.ts",
-    "discover:bands": "tsx --env-file-if-exists=.env scripts/discover-bands.ts",
-    "backfill:queue": "tsx --env-file-if-exists=.env scripts/backfill-queue.ts",
-    "backfill:release-titles": "tsx --env-file-if-exists=.env scripts/backfill-release-titles.ts",
-    "sweep:queue": "tsx --env-file-if-exists=.env scripts/sweep-queue.ts"
+    "migrate": "node --import tsx scripts/migrate.ts",
+    "seed": "node --import tsx scripts/seed.ts",
+    "discover": "node --env-file-if-exists=.env --import tsx scripts/discover.ts",
+    "discover:bands": "node --env-file-if-exists=.env --import tsx scripts/discover-bands.ts",
+    "backfill:queue": "node --env-file-if-exists=.env --import tsx scripts/backfill-queue.ts",
+    "backfill:release-titles": "node --env-file-if-exists=.env --import tsx scripts/backfill-release-titles.ts",
+    "sweep:queue": "node --env-file-if-exists=.env --import tsx scripts/sweep-queue.ts"
   },
   "dependencies": {
     "@hacs-stats/db": "workspace:*"
