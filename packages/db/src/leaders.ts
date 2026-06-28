@@ -427,6 +427,18 @@ export interface ReleaseDownloadRow {
 let cachedLatestSnapshotDate: { value: string | null; cachedAt: number } | null = null;
 const LATEST_SNAPSHOT_CACHE_MS = 60_000;
 
+/**
+ * The newest snapshot_date across both per-repo and per-asset snapshots.
+ * Used as the Last-Modified header for catalogue-wide pages (home,
+ * search, categories) — they only change content when the daily scrape
+ * advances the snapshot date. Exposed alongside the cached
+ * latestSnapshotDate helper to share the same 60s memoisation; both
+ * tables advance together via the same scrape transaction.
+ */
+export function dataAsOfDate(db: Db): string {
+  return latestSnapshotDate(db) ?? new Date().toISOString().slice(0, 10);
+}
+
 function latestSnapshotDate(db: Db): string | null {
   const now = Date.now();
   if (

@@ -12,6 +12,7 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { ADMIN_QUEUE_JS } from './admin-queue-script.js';
 import { FAVICON_LIVE } from './favicon.js';
+import { notModifiedSince, parseTimestamp, setCacheHeaders } from './http-cache.js';
 import { renderLayout } from './layout.js';
 import { renderAboutPage } from './pages/about.js';
 import { renderAdminPage } from './pages/admin.js';
@@ -174,7 +175,22 @@ app.get('/static/admin-queue.js', (c) => {
   return c.body(ADMIN_QUEUE_JS);
 });
 
+/**
+ * Catalogue-wide Last-Modified — the most recent scrape day. The whole
+ * dashboard turns over on the same daily cadence (scrape at 04:00 UTC
+ * writes the full snapshot pass), so every listing/category/home view
+ * shares this one timestamp. Cloudflare caches at the edge; once
+ * tomorrow's scrape lands the cached body becomes stale and CF
+ * revalidates with us via If-Modified-Since.
+ */
+function catalogueLastModified(): Date {
+  return parseTimestamp(`${leaders.dataAsOfDate(db)}T04:00:00Z`);
+}
+
 app.get('/', (c) => {
+  const lm = catalogueLastModified();
+  if (notModifiedSince(c, lm)) return c.body(null, 304);
+  setCacheHeaders(c, lm);
   const body = renderHome({
     repoCount: repos.countRepos(db),
     topByStars: leaders.topByStars(db, 15),
@@ -193,6 +209,9 @@ app.get('/', (c) => {
 });
 
 app.get('/categories', (c) => {
+  const lm = catalogueLastModified();
+  if (notModifiedSince(c, lm)) return c.body(null, 304);
+  setCacheHeaders(c, lm);
   const body = renderCategoriesIndex({ totals: repos.categoryCounts(db) });
   return c.html(renderLayout({ title: 'Categories — hacs-stats', navActive: 'categories', body }));
 });
@@ -232,6 +251,9 @@ app.get('/owner/:owner', (c) => {
       400,
     );
   }
+  const lm = catalogueLastModified();
+  if (notModifiedSince(c, lm)) return c.body(null, 304);
+  setCacheHeaders(c, lm);
   const ownerRepos = leaders.reposByOwner(db, owner, 200);
   return c.html(
     renderLayout({
@@ -281,6 +303,12 @@ app.get('/r/:owner/:name', (c) => {
       404,
     );
   }
+  // Per-repo Last-Modified: the repo's own last_scraped_at when present,
+  // else the catalogue-wide cutover. Pending/never-scraped rows fall
+  // back to the catalogue date so they still get cached.
+  const lm = parseTimestamp(detail.last_scraped_at ?? `${leaders.dataAsOfDate(db)}T04:00:00Z`);
+  if (notModifiedSince(c, lm)) return c.body(null, 304);
+  setCacheHeaders(c, lm);
   const starsSeries = time('starsSeries', () => starsSeriesForRepo(detail.id));
   const releaseRows = time('releaseRows', () => leaders.releaseDownloadsForRepo(db, detail.id, 25));
   const relatedRepos = time('relatedRepos', () => repos.listRepoIdentsByOwner(db, owner, fullName));
@@ -353,6 +381,10 @@ app.get('/search', (c) => {
   const kind = isRepoKind(kindRaw) ? kindRaw : undefined;
   const page = parsePage(c.req.query('page'));
 
+  const lm = catalogueLastModified();
+  if (notModifiedSince(c, lm)) return c.body(null, 304);
+  setCacheHeaders(c, lm);
+
   // Always run the query — /search is the single listing surface (home
   // sections, category cards, and direct visits all land here). An empty
   // q + no kind + default sort means "show everything sorted by name",
@@ -391,6 +423,9 @@ app.get('/search', (c) => {
 });
 
 app.get('/pending', (c) => {
+  const lm = catalogueLastModified();
+  if (notModifiedSince(c, lm)) return c.body(null, 304);
+  setCacheHeaders(c, lm);
   const rows = leaders.pendingRepos(db, 200);
   return c.html(
     renderLayout({
@@ -401,6 +436,9 @@ app.get('/pending', (c) => {
 });
 
 app.get('/removed', (c) => {
+  const lm = catalogueLastModified();
+  if (notModifiedSince(c, lm)) return c.body(null, 304);
+  setCacheHeaders(c, lm);
   const rows = leaders.removedRepos(db, 200);
   return c.html(
     renderLayout({
