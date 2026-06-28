@@ -139,8 +139,13 @@ const app = new Hono();
 const GTAG_INLINE_SHA256 = 'sha256-oMZayXzesR1hateqaVS8Wx5q7j/dmUGohqU6xQnCkHA=';
 const CSP = [
   "default-src 'self'",
-  `script-src 'self' https://www.googletagmanager.com '${GTAG_INLINE_SHA256}'`,
-  "connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com",
+  // Cloudflare's Web Analytics (enabled at the CF dashboard, not in
+  // our code) auto-injects a beacon script from static.cloudflareinsights.com
+  // and POSTs hits to cloudflareinsights.com. Allow both — refusing would
+  // either break the analytics or force us to disable the CF feature
+  // entirely.
+  `script-src 'self' https://www.googletagmanager.com https://static.cloudflareinsights.com '${GTAG_INLINE_SHA256}'`,
+  "connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://cloudflareinsights.com",
   "img-src 'self' data: https://*.google-analytics.com https://*.googletagmanager.com",
   "style-src 'self' 'unsafe-inline'",
   "object-src 'none'",
