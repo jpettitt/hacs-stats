@@ -114,6 +114,13 @@ header.topbar .brand a {
   color: var(--text);
   text-decoration: none;
   font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+}
+header.topbar .brand-mark {
+  vertical-align: middle;
+  /* SVG renders crisply at any pixel ratio; no need for @2x */
 }
 header.topbar nav {
   display: flex; gap: .25rem; flex: 1; flex-wrap: wrap;
@@ -551,12 +558,13 @@ export function renderLayout(props: LayoutProps): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(props.title)}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <style>${CSS}</style>
   ${GTAG}
 </head>
 <body>
   <header class="topbar">
-    <h1 class="brand"><a href="/">${escapeHtml(heading)}</a> <span class="badge">unofficial</span></h1>
+    <h1 class="brand"><a href="/"><img class="brand-mark" src="/favicon.svg" alt="" width="28" height="28"> ${escapeHtml(heading)}</a> <span class="badge">unofficial</span></h1>
     <nav>
       ${navLink('/', 'Home', 'home', props.navActive)}
       ${navLink('/categories', 'Categories', 'categories', props.navActive)}

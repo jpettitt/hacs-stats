@@ -3,6 +3,7 @@ import type { RepoKind } from '@hacs-stats/shared';
 import { REPO_KINDS } from '@hacs-stats/shared';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import { FAVICON_LIVE } from './favicon.js';
 import { renderLayout } from './layout.js';
 import { renderAboutPage } from './pages/about.js';
 import { renderAdminPage } from './pages/admin.js';
@@ -73,6 +74,13 @@ app.use('*', async (c, next) => {
 });
 
 app.get('/health', (c) => c.json({ ok: true }));
+
+// Favicon — inline SVG, cached for a day. Lives in apps/web/src/favicon.ts.
+app.get('/favicon.svg', (c) => {
+  c.header('Content-Type', 'image/svg+xml');
+  c.header('Cache-Control', 'public, max-age=86400');
+  return c.body(FAVICON_LIVE);
+});
 
 app.get('/', (c) => {
   const body = renderHome({
