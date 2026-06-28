@@ -1,6 +1,6 @@
 /**
  * /privacy — plain-language privacy disclosure. Surfaces what we collect,
- * what cookies are set (right now: just Google Analytics 4), and who the
+ * what cookies are set (Google Analytics 4), and who the
  * data flows to. Linked from the footer.
  *
  * Kept as static HTML rather than a real CMS — the policy changes once a
@@ -33,12 +33,26 @@ export function renderPrivacyPage(): string {
       subject to <a href="https://policies.google.com/privacy"
       target="_blank" rel="noopener noreferrer">their privacy policy</a>.</p>
 
+      <p><strong>Cloudflare Web Analytics.</strong> Cloudflare (our CDN)
+      auto-injects a small beacon script
+      (<code>static.cloudflareinsights.com/beacon.min.js</code>) that
+      reports page views to <code>cloudflareinsights.com</code>.
+      Cookieless and IP-anonymised — Cloudflare uses sampling and
+      aggregation rather than persistent identifiers. We use it for
+      privacy-respecting performance and traffic insight that doesn't
+      depend on the user accepting cookies. See
+      <a href="https://www.cloudflare.com/web-analytics-privacy/"
+      target="_blank" rel="noopener noreferrer">Cloudflare's
+      explanation</a>.</p>
+
       <p>We do not run any other third-party trackers, ads, or
       fingerprinting libraries. There is no embedded social-media
-      content. The only outbound requests your browser makes from our
-      pages are to <code>googletagmanager.com</code> and
-      <code>google-analytics.com</code> (for the analytics above), and
-      to <code>github.com</code> when you click a repo link.</p>
+      content. The outbound requests your browser makes from our
+      pages are limited to <code>googletagmanager.com</code> +
+      <code>google-analytics.com</code> (Google Analytics),
+      <code>static.cloudflareinsights.com</code> +
+      <code>cloudflareinsights.com</code> (Cloudflare analytics),
+      and <code>github.com</code> when you click a repo link.</p>
     </section>
 
     <section>
