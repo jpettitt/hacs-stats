@@ -1,5 +1,5 @@
 import { fmtDownloads, fmtInt, kindBadge, repoTags } from '../components.js';
-import { escapeHtml } from '../sanitize.js';
+import { escapeHtml, isSafeRepoFullName } from '../sanitize.js';
 
 export interface OwnerRow {
   full_name: string;
@@ -44,9 +44,14 @@ export function renderOwnerPage(props: OwnerPageProps): string {
       const releaseDl = r.latest_release_tag
         ? `${fmtDownloads(r.latest_release_downloads)} <span class="muted small">(${escapeHtml(r.latest_release_tag)})</span>`
         : '<span class="muted">—</span>';
+      // Guard the /r/<full_name> path with the same shape check the
+      // route handler applies — defence in depth, the assertion is free.
+      const linkedName = isSafeRepoFullName(r.full_name)
+        ? `<a href="/r/${safeFull}">${safeName}</a>`
+        : `<span class="unsafe">${safeName}</span>`;
       return `<tr>
         <td>
-          <a href="/r/${safeFull}">${safeName}</a>${kindBadge(r.kind)}${tags}${stateBadge}
+          ${linkedName}${kindBadge(r.kind)}${tags}${stateBadge}
           <div class="muted small">${safeFull}</div>
           ${desc ? `<div class="muted small">${desc}</div>` : ''}
         </td>

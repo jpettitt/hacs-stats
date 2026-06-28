@@ -429,14 +429,66 @@ const LATEST_SNAPSHOT_CACHE_MS = 60_000;
 
 /**
  * The newest snapshot_date across both per-repo and per-asset snapshots.
- * Used as the Last-Modified header for catalogue-wide pages (home,
- * search, categories) — they only change content when the daily scrape
- * advances the snapshot date. Exposed alongside the cached
- * latestSnapshotDate helper to share the same 60s memoisation; both
- * tables advance together via the same scrape transaction.
+ * Coarse-grained (YYYY-MM-DD) — useful when the caller wants the daily
+ * cutover date rather than a precise event timestamp. For HTTP caching
+ * (Last-Modified header) use dataLastModifiedTs() instead, which
+ * additionally picks up discovery activity and admin decisions.
  */
 export function dataAsOfDate(db: Db): string {
   return latestSnapshotDate(db) ?? new Date().toISOString().slice(0, 10);
+}
+
+let cachedDataLastModified: { value: string; cachedAt: number } | null = null;
+const DATA_LAST_MODIFIED_CACHE_MS = 60_000;
+
+/** Wipe the 60s memo. Call after a write that should immediately bust
+ * the catalogue-wide Last-Modified header (admin accept/reject etc.).
+ * Without this, an admin decision plus a CF revalidation in the same
+ * minute would let CF cache the now-stale body for the full s-maxage. */
+export function invalidateDataLastModified(): void {
+  cachedDataLastModified = null;
+}
+
+/**
+ * The latest of:
+ *   - MAX(repos.last_scraped_at) — last successful per-repo scrape
+ *   - MAX(discovery_queue.discovered_at) — last discover run that
+ *     enqueued anything new
+ *   - MAX(discovery_queue.decided_at) — last admin accept/reject
+ *
+ * Returned as an ISO timestamp ready for the HTTP Last-Modified header.
+ * Memoised for 60s — every catalogue-wide page render hits this, and
+ * the underlying tables advance on minute-or-coarser cadences.
+ *
+ * Picking the latest across all three sources means CF / browser
+ * caches revalidate immediately after an admin clears the queue or
+ * a manual discover run lands, rather than waiting for the next
+ * nightly scrape datestamp to flip.
+ */
+export function dataLastModifiedTs(db: Db): string {
+  const now = Date.now();
+  if (
+    cachedDataLastModified &&
+    now - cachedDataLastModified.cachedAt < DATA_LAST_MODIFIED_CACHE_MS
+  ) {
+    return cachedDataLastModified.value;
+  }
+  const row = db.raw
+    .prepare<[], { ts: string | null }>(
+      `SELECT MAX(ts) AS ts FROM (
+         SELECT MAX(last_scraped_at) AS ts FROM repos
+         UNION ALL
+         SELECT MAX(discovered_at) AS ts FROM discovery_queue
+         UNION ALL
+         SELECT MAX(decided_at) AS ts FROM discovery_queue
+       )`,
+    )
+    .get();
+  // Fallback: brand-new DB with no scrapes yet → use process start time
+  // rather than the epoch, so caches don't get a 1970 Last-Modified.
+  const ts = row?.ts ?? new Date().toISOString();
+  cachedDataLastModified = { value: ts, cachedAt: now };
+  return ts;
 }
 
 function latestSnapshotDate(db: Db): string | null {

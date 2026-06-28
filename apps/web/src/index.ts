@@ -176,15 +176,14 @@ app.get('/static/admin-queue.js', (c) => {
 });
 
 /**
- * Catalogue-wide Last-Modified — the most recent scrape day. The whole
- * dashboard turns over on the same daily cadence (scrape at 04:00 UTC
- * writes the full snapshot pass), so every listing/category/home view
- * shares this one timestamp. Cloudflare caches at the edge; once
- * tomorrow's scrape lands the cached body becomes stale and CF
- * revalidates with us via If-Modified-Since.
+ * Catalogue-wide Last-Modified — the most recent of: any repo's last
+ * successful scrape, any discover-queue insertion, any admin
+ * accept/reject. Backed by a 60s memo so listing pages don't re-query
+ * on every hit. CF + browser revalidate via If-Modified-Since; the
+ * 304 response is essentially free.
  */
 function catalogueLastModified(): Date {
-  return parseTimestamp(`${leaders.dataAsOfDate(db)}T04:00:00Z`);
+  return parseTimestamp(leaders.dataLastModifiedTs(db));
 }
 
 app.get('/', (c) => {
@@ -525,6 +524,11 @@ app.post('/submit', async (c) => {
   // rejected" outcomes back to the submitter as useful feedback rather
   // than the misleading "thanks, queued!" we used to always show.
   const outcome = discoveryQueue.recordUserSubmission(rwDb, { url, notes });
+  // Bust the catalogue-wide cache memo so /pending reflects the new
+  // submission on the next request (rather than waiting up to 60s).
+  if (outcome === 'inserted' || outcome === 'promoted') {
+    leaders.invalidateDataLastModified();
+  }
   const flash =
     outcome === 'already-accepted'
       ? {
@@ -688,6 +692,7 @@ app.post('/admin/queue/decide', async (c) => {
   }
   if (decision === 'reject') {
     discoveryQueue.setQueueStatus(rwDb, url, 'rejected', null);
+    leaders.invalidateDataLastModified();
     return ok('rejected');
   }
   const m = /github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(url);
@@ -712,6 +717,7 @@ app.post('/admin/queue/decide', async (c) => {
     source,
   });
   discoveryQueue.setQueueStatus(rwDb, url, 'accepted', null);
+  leaders.invalidateDataLastModified();
   return ok(`accepted ${owner}/${name}`);
 });
 

@@ -1,5 +1,5 @@
 import { fmtDelta, fmtDownloads, fmtInt, kindLabel, repoTags } from '../components.js';
-import { escapeHtml, safeGithubRepoUrl } from '../sanitize.js';
+import { escapeHtml, isSafeRepoFullName, safeGithubRepoUrl } from '../sanitize.js';
 import { renderLineChart } from '../svg-chart.js';
 
 export interface RepoDetailProps {
@@ -268,11 +268,14 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
 
   // For forks, surface what they were forked from so the user can chase
   // the lineage. Link goes to the parent's GitHub page (we don't necessarily
-  // have it in our own catalogue).
+  // have it in our own catalogue). The parent_full_name string came from
+  // GitHub's API — route it through safeGithubRepoUrl so a malformed value
+  // (or one with /? or #) can't construct a misleading github.com link.
+  const parentUrl = detail.parent_full_name ? safeGithubRepoUrl(detail.parent_full_name) : null;
   const forkParentRow = detail.is_fork
     ? `<tr><td>Forked from</td><td>${
-        detail.parent_full_name
-          ? `<a href="https://github.com/${escapeHtml(detail.parent_full_name)}" target="_blank" rel="noopener noreferrer">${escapeHtml(detail.parent_full_name)} ↗</a>`
+        parentUrl && detail.parent_full_name
+          ? `<a href="${parentUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(detail.parent_full_name)} ↗</a>`
           : '<span class="muted">unknown (GitHub didn’t return a parent)</span>'
       }</td></tr>`
     : '';
@@ -337,7 +340,12 @@ function renderRelatedSection(
     .map((r) => {
       const safe = escapeHtml(r.full_name);
       const label = r.hacs_name ? escapeHtml(r.hacs_name) : safe;
-      return `<li><a href="/r/${safe}">${label}</a> <span class="muted small">${escapeHtml(r.kind)}</span></li>`;
+      // Guard the /r/<full_name> path with the same shape check the route
+      // handler applies — DB-trusted but the assertion is free.
+      const linked = isSafeRepoFullName(r.full_name)
+        ? `<a href="/r/${safe}">${label}</a>`
+        : `<span>${label}</span>`;
+      return `<li>${linked} <span class="muted small">${escapeHtml(r.kind)}</span></li>`;
     })
     .join('');
   const more =

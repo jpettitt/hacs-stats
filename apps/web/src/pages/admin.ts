@@ -1,5 +1,5 @@
 import { fmtInt, renderLeaderTable, renderPagination } from '../components.js';
-import { escapeHtml } from '../sanitize.js';
+import { escapeHtml, isSafeRepoFullName, safeHttpsGithubUrl } from '../sanitize.js';
 
 /** Row shape consumed by renderLeaderTable — mirrors what the search /
  * category pages pass in. The accepted-tab listing repurposes that
@@ -135,8 +135,17 @@ export function renderAdminPage(props: AdminPageProps): string {
   const nowMs = Date.now();
   const rows = props.pending
     .map((it) => {
+      // it.url originates from /submit POST or the discover worker. /submit
+      // forces the `https://github.com/<owner>/<name>` shape, but the
+      // queue table has no DB-level constraint — anything could be here.
+      // Validate before using it as an href to block `javascript:` /
+      // `data:` schemes and path-traversal to other github.com paths.
+      // escapeHtml on its own only defeats attribute-quote breakout.
+      const safeGhUrl = safeHttpsGithubUrl(it.url);
       const safeUrl = escapeHtml(it.url);
-      const safeFullName = escapeHtml(urlToFullName(it.url));
+      const fullName = urlToFullName(it.url);
+      const safeFullName = escapeHtml(fullName);
+      const internalLinkSafe = isSafeRepoFullName(fullName);
       const safeNotes = it.notes ? escapeHtml(it.notes) : '';
       const safeDesc = it.description ? escapeHtml(it.description) : '';
       const starsCell = it.stars === null ? '—' : fmtInt(it.stars);
@@ -151,12 +160,17 @@ export function renderAdminPage(props: AdminPageProps): string {
               <strong>Related projects from same owner</strong> (${it.related.length}):<br>
               ${it.related
                 .slice(0, 8)
-                .map(
-                  (r) =>
-                    `<a href="/r/${escapeHtml(r.full_name)}">${escapeHtml(
-                      r.hacs_name && r.hacs_name.length > 0 ? r.hacs_name : r.full_name,
-                    )}</a>`,
-                )
+                .map((r) => {
+                  // Guard the internal /r/ path with the same shape check
+                  // we apply on the route handler — defence in depth, the
+                  // catalogue is high-trust but the assertion is cheap.
+                  const label = escapeHtml(
+                    r.hacs_name && r.hacs_name.length > 0 ? r.hacs_name : r.full_name,
+                  );
+                  return isSafeRepoFullName(r.full_name)
+                    ? `<a href="/r/${escapeHtml(r.full_name)}">${label}</a>`
+                    : `<span>${label}</span>`;
+                })
                 .join(', ')}${it.related.length > 8 ? `, +${it.related.length - 8} more` : ''}
             </div>`
           : '';
@@ -182,9 +196,11 @@ export function renderAdminPage(props: AdminPageProps): string {
       // any listing page. Pending/rejected rows aren't in `repos` (or
       // shouldn't be navigated to internally), so they keep the GitHub link.
       const repoLink =
-        props.status === 'accepted'
+        props.status === 'accepted' && internalLinkSafe
           ? `<a href="/r/${safeFullName}">${safeFullName}</a>`
-          : `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeFullName}</a>`;
+          : safeGhUrl
+            ? `<a href="${safeGhUrl}" target="_blank" rel="noopener noreferrer">${safeFullName}</a>`
+            : `<span class="muted">${safeFullName}</span>`;
       return `<tr>
         <td>
           ${repoLink}

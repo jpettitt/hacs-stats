@@ -167,8 +167,12 @@ export function setQueueStatus(
   status: DiscoveryStatus,
   notes?: string | null,
 ): boolean {
+  // Stamp decided_at so the catalogue-wide Last-Modified header (used by
+  // CF + browser revalidation) picks up admin actions immediately,
+  // rather than waiting until the next scrape / discover advances the
+  // datestamp. See dataLastModifiedTs() in leaders.ts.
   const res = db.raw
-    .prepare('UPDATE discovery_queue SET status = ?, notes = ? WHERE url = ?')
-    .run(status, notes ?? null, url);
+    .prepare('UPDATE discovery_queue SET status = ?, notes = ?, decided_at = ? WHERE url = ?')
+    .run(status, notes ?? null, new Date().toISOString(), url);
   return res.changes > 0;
 }

@@ -52,3 +52,26 @@ export function safeGithubRepoUrl(fullName: string): string | null {
   // need it the moment we accept anything broader.
   return `https://github.com/${fullName}`;
 }
+
+/**
+ * Accept a URL only if it canonicalises to `https://github.com/<owner>/<name>`
+ * exactly — no other host, no path / query / fragment beyond the repo root.
+ * Used to sanitise href targets built from `discovery_queue.url` (admin or
+ * code-search supplied) before they reach `<a href="…">`.
+ *
+ * escapeHtml() on its own defeats attribute-quote breakout but does NOT
+ * block `javascript:` / `data:` schemes, nor a path-traversal to a
+ * different github.com subpath. Returns the canonical URL on success,
+ * null otherwise; caller renders plain text on null.
+ */
+export function safeHttpsGithubUrl(raw: string): string | null {
+  if (typeof raw !== 'string') return null;
+  if (raw.length === 0 || raw.length > 256) return null;
+  const PREFIX = 'https://github.com/';
+  if (!raw.startsWith(PREFIX)) return null;
+  const tail = raw.slice(PREFIX.length);
+  // Reject any path/query/fragment beyond the repo root — we want exactly
+  // owner/name. Block trailing slash too; canonical URLs don't have it.
+  if (tail.includes('?') || tail.includes('#') || tail.endsWith('/')) return null;
+  return isSafeRepoFullName(tail) ? `${PREFIX}${tail}` : null;
+}
