@@ -92,6 +92,24 @@ pnpm seed
 The local SQLite file lives at `./data/dev.db` (gitignored, never auto-wiped).
 Snapshot durability matters — see [ARCHITECTURE.md → Local development](./ARCHITECTURE.md#local-development).
 
+### Env vars for operational scripts
+
+The one-off scripts (`pnpm discover`, `pnpm sweep:queue`, `pnpm backfill:queue`,
+`pnpm backfill:release-titles`, etc.) need `GITHUB_TOKEN` in the process
+environment. They don't auto-load `.env` — load it yourself:
+
+```sh
+# Either source per-invocation:
+set -a; source .env; set +a; pnpm discover
+
+# Or set up direnv so every cd into the repo exports it:
+echo 'dotenv .env' > .envrc && direnv allow
+```
+
+The web + scraper `dev:*` scripts and the systemd-managed prod services both
+load env separately (tsx watch for dev, `EnvironmentFile=/etc/hacs-stats/env`
+for prod); this only matters for the manual `scripts/` entry points.
+
 ## Deploy
 
 See [deploy/README.md](./deploy/README.md) for the VPS install steps,
