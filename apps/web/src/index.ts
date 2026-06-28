@@ -47,24 +47,73 @@ const isRepoKind = (s: string): s is RepoKind => VALID_KINDS.has(s);
  * rendered curve so the chart's x-axis stays legible. */
 const STAR_HISTORY_DISPLAY_DAYS = 365 * 3;
 
+interface StarsSeries {
+  points: Array<{ date: string; value: number }>;
+  /** True when older data was clipped off by the 3-year display rule.
+   * Tells the chart to float the y-axis instead of pinning to 0 (which
+   * would otherwise compress the visible range against the top). */
+  truncated: boolean;
+}
+
 /**
  * Star series for one repo's detail page. Prefers the
  * repo_star_history table (full curve back to repo creation, fed by the
  * scraper's step 2.5), and falls back to the last 30 daily snapshots
  * when history hasn't been built yet (newly-added repos before their
  * first star-history scrape). Trims to the last 3y for display.
+ *
+ * Returns ISO timestamps (not bare YYYY-MM-DD) so downstream Date()
+ * parsing isn't ambiguous about time-zone.
  */
-function starsSeriesForRepo(repoId: number): Array<{ date: string; value: number }> {
+function starsSeriesForRepo(repoId: number): StarsSeries {
+  const todayDay = new Date().toISOString().slice(0, 10);
+
+  /** Add a synthetic data point at today's date carrying the latest
+   * cumulative value, so the chart's right edge is "now" rather than
+   * the day of the last star event. A repo that hasn't picked up a
+   * star in two weeks should show a visible flat run at the end of
+   * the curve, not a chart that stops two weeks ago. No-op when the
+   * series already has a point on today. */
+  const extendToToday = (points: Array<{ date: string; value: number }>) => {
+    if (points.length === 0) return;
+    const last = points[points.length - 1];
+    if (!last) return;
+    if (last.date.startsWith(todayDay)) return;
+    points.push({ date: `${todayDay}T00:00:00Z`, value: last.value });
+  };
+
   const history = starHistory.repoStarHistory(db, repoId);
   if (history.length > 0) {
-    const cutoff = new Date(Date.now() - STAR_HISTORY_DISPLAY_DAYS * 86_400_000)
+    const cutoffDay = new Date(Date.now() - STAR_HISTORY_DISPLAY_DAYS * 86_400_000)
       .toISOString()
       .slice(0, 10);
-    return history
-      .filter((p) => p.day >= cutoff)
-      .map((p) => ({ date: p.day, value: p.cumulative }));
+    const trimmed = history.filter((p) => p.day >= cutoffDay);
+    const truncated = trimmed.length < history.length;
+    const points = trimmed.map((p) => ({
+      date: `${p.day}T00:00:00Z`,
+      value: p.cumulative,
+    }));
+    // Prepend a zero anchor one day before the first observed star so
+    // the chart visually starts at 0 and rises to the first data point,
+    // instead of starting at whatever the first day's count was. Only
+    // when the curve isn't truncated by the 3y rule — otherwise the
+    // "first" point is just the oldest visible one (not the repo's
+    // first star ever) and a zero anchor there would be a lie.
+    if (!truncated && points.length > 0 && points[0]) {
+      const firstDay = points[0].date.slice(0, 10);
+      const dayBefore = new Date(Date.parse(`${firstDay}T00:00:00Z`) - 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      points.unshift({ date: `${dayBefore}T00:00:00Z`, value: 0 });
+    }
+    extendToToday(points);
+    return { points, truncated };
   }
-  return leaders.repoStarsTimeseries(db, repoId, 30).map((p) => ({ date: p.date, value: p.stars }));
+  const points = leaders
+    .repoStarsTimeseries(db, repoId, 30)
+    .map((p) => ({ date: `${p.date}T00:00:00Z`, value: p.stars }));
+  extendToToday(points);
+  return { points, truncated: false };
 }
 
 const app = new Hono();

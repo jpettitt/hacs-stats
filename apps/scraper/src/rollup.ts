@@ -112,18 +112,22 @@ export function computeStatsCache(
           GROUP BY repo_id
         ),
         star_deltas AS (
-          -- Compare today's stars vs the earliest snapshot in each window.
-          -- A repo with only today's snapshot lands with delta = 0.
+          -- 7d / 30d star deltas computed from repo_star_history (per-day
+          -- buckets, fed by the scraper's step 2.5 from /stargazers
+          -- timestamps). Replaces the old "diff today's repo_snapshot
+          -- against the snapshot N days ago" approach, which gave delta=0
+          -- for any repo we hadn't been snapshotting for N+ days. Star-
+          -- history goes back to repo creation, so deltas are accurate
+          -- on the first day a repo is in the catalogue.
           SELECT
             repo_id,
-            MAX(CASE WHEN snapshot_date = @asOfDate THEN stars END) AS today,
-            MIN(CASE
-              WHEN snapshot_date BETWEEN date(@asOfDate, '-7 days') AND @asOfDate
-              THEN stars END) AS week_ago,
-            MIN(CASE
-              WHEN snapshot_date BETWEEN date(@asOfDate, '-30 days') AND @asOfDate
-              THEN stars END) AS month_ago
-          FROM repo_snapshots
+            COALESCE(SUM(CASE
+              WHEN day BETWEEN date(@asOfDate, '-7 days') AND @asOfDate
+              THEN stars_added END), 0) AS week_delta,
+            COALESCE(SUM(CASE
+              WHEN day BETWEEN date(@asOfDate, '-30 days') AND @asOfDate
+              THEN stars_added END), 0) AS month_delta
+          FROM repo_star_history
           GROUP BY repo_id
         ),
         ranked_stable_releases AS (
@@ -256,8 +260,8 @@ export function computeStatsCache(
           rr.tag,
           rr.delta_30d,
           COALESCE(prd.total_downloads_30d, 0),
-          COALESCE(sd.today - sd.week_ago, 0),
-          COALESCE(sd.today - sd.month_ago, 0),
+          COALESCE(sd.week_delta, 0),
+          COALESCE(sd.month_delta, 0),
           lrd.tag,
           lrd.downloads,
           -- Clean install signal: today's latest-release downloads minus the

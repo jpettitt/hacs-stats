@@ -15,16 +15,20 @@ describe('renderLineChart', () => {
     expect(svg).not.toContain('<path');
   });
 
-  it('draws a path with one M and one or more L commands for ≥ 2 points', () => {
+  it('draws a step-after path for ≥ 2 points (M followed by alternating L commands)', () => {
     const svg = renderLineChart([
       { date: '2026-06-20', value: 100 },
       { date: '2026-06-21', value: 120 },
       { date: '2026-06-22', value: 115 },
     ]);
+    // step-after for 3 points emits one M and then L commands for each
+    // horizontal-then-vertical pair: M L L L L (= 1 M + 4 L). We just
+    // assert there's a single M and "enough L's" rather than pinning
+    // an exact count — d3 could in theory emit H/V shorthand later.
     const m = (svg.match(/M\d/g) ?? []).length;
     const l = (svg.match(/L\d/g) ?? []).length;
     expect(m).toBe(1);
-    expect(l).toBe(2);
+    expect(l).toBeGreaterThanOrEqual(2);
   });
 
   it('emits y-axis labels using k-suffix for large numbers', () => {
@@ -32,17 +36,50 @@ describe('renderLineChart', () => {
       { date: '2026-06-20', value: 10000 },
       { date: '2026-06-22', value: 21500 },
     ]);
-    expect(svg).toMatch(/>10k</);
-    expect(svg).toMatch(/>21\.5k</);
+    // d3's tick algorithm picks round numbers; we just assert the
+    // k-suffix formatting is applied to the largest tick.
+    expect(svg).toMatch(/>2[0-5]k</);
   });
 
-  it('escapes XML metacharacters in date labels', () => {
+  it('drops points with unparseable date strings rather than rendering NaN paths', () => {
     const svg = renderLineChart([
       { date: '2026-06-20<script>', value: 1 },
       { date: '2026-06-22', value: 2 },
+      { date: '2026-06-23', value: 3 },
     ]);
-    expect(svg).not.toContain('<script>');
-    expect(svg).toContain('&lt;script&gt;');
+    // Bad row was filtered out; remaining 2 rendered cleanly.
+    expect(svg).not.toContain('<script');
+    expect(svg).not.toContain('NaN');
+    expect(svg).toContain('<path');
+  });
+
+  it('shows empty-state SVG when every point has a bad date', () => {
+    const svg = renderLineChart([
+      { date: 'not-a-date', value: 1 },
+      { date: 'also-not', value: 2 },
+    ]);
+    expect(svg).toContain('no data yet');
+    expect(svg).not.toContain('<path');
+  });
+
+  it('pins y-axis to 0 by default (zeroBase)', () => {
+    const svg = renderLineChart([
+      { date: '2026-06-20', value: 100 },
+      { date: '2026-06-22', value: 120 },
+    ]);
+    expect(svg).toMatch(/class="chart-axis">0</);
+  });
+
+  it('floats y-axis when zeroBase=false (the 3y-truncated case)', () => {
+    const svg = renderLineChart(
+      [
+        { date: '2026-06-20', value: 100 },
+        { date: '2026-06-22', value: 120 },
+      ],
+      { zeroBase: false },
+    );
+    // 0 should NOT appear as a tick label when the floor is floated.
+    expect(svg).not.toMatch(/class="chart-axis">0</);
   });
 
   it('uses the provided className + aria-label', () => {

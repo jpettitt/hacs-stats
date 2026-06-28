@@ -500,10 +500,24 @@ a.repo-name .repo-slug { display: inline-block; margin-left: .25rem; }
 .repo-title .badge { margin-left: .5rem; vertical-align: 0.15em; }
 
 /* ---------- chart ---------------------------------------------------- */
-.chart { width: 100%; height: auto; max-height: 220px; }
-.chart-line { stroke: var(--chart-line); stroke-width: 2; fill: none; }
-.chart-grid { stroke: var(--chart-grid); stroke-dasharray: 2 3; stroke-width: 1; }
-.chart-axis { font-size: 11px; fill: var(--text-dimmer); }
+.chart {
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+  /* Visual separation from the page background. The SVG is a chunky
+     content block on the repo detail page — without its own surface
+     it floats awkwardly between the stat tiles and the metadata table. */
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+  padding: .75rem .25rem .25rem;
+  box-sizing: border-box;
+}
+.chart-line      { stroke: var(--chart-line); stroke-width: 2; fill: none; }
+.chart-grid      { stroke: var(--chart-grid); stroke-dasharray: 2 3; stroke-width: 1; }
+.chart-axis-line { stroke: var(--text-muted); stroke-width: 1; }
+.chart-axis-tick { stroke: var(--text-muted); stroke-width: 1; }
+.chart-axis      { font-size: 11px; fill: var(--text-dimmer); }
 .chart-empty { font-size: 12px; fill: var(--text-dimmer); }
 
 /* ---------- footer / inline code ------------------------------------ */

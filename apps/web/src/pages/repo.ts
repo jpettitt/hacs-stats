@@ -35,7 +35,12 @@ export interface RepoDetailProps {
 
 export interface RepoDetailViewModel {
   detail: RepoDetailProps;
-  starsSeries: Array<{ date: string; value: number }>;
+  starsSeries: {
+    points: Array<{ date: string; value: number }>;
+    /** True when the 3-year display rule clipped older data. Lets the
+     * chart float the y-axis instead of pinning to 0. */
+    truncated: boolean;
+  };
   releases: Array<{
     tag: string;
     published_at: string;
@@ -155,8 +160,12 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
         </p>`
       : '';
 
-  const starsChart = renderLineChart(starsSeries, {
+  const starsChart = renderLineChart(starsSeries.points, {
     ariaLabel: `Stars over time for ${detail.full_name}`,
+    // When the 3-year display rule clipped older data, the y-axis floor
+    // would otherwise compress the visible portion against the top of
+    // the chart. Float the floor in that case; otherwise pin to 0.
+    zeroBase: !starsSeries.truncated,
   });
 
   const releaseRows = releases
@@ -219,7 +228,7 @@ export function renderRepoDetail(vm: RepoDetailViewModel): string {
     <section>
       <h2>Stars over time</h2>
       ${starsChart}
-      ${starsSeries.length < 2 ? '<p class="muted small">Chart needs at least 2 daily snapshots to draw a line. Once tomorrow’s scrape lands, the trend will show up here.</p>' : ''}
+      ${starsSeries.points.length < 2 ? '<p class="muted small">Chart needs at least 2 daily snapshots to draw a line. Once tomorrow’s scrape lands, the trend will show up here.</p>' : ''}
     </section>
     <section>
       <h2>Metadata</h2>

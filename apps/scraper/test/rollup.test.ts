@@ -1,4 +1,12 @@
-import { openDb, releases, repos, runMigrations, snapshots, statsCache } from '@hacs-stats/db';
+import {
+  openDb,
+  releases,
+  repos,
+  runMigrations,
+  snapshots,
+  starHistory,
+  statsCache,
+} from '@hacs-stats/db';
 import { describe, expect, it } from 'vitest';
 import { computeStatsCache } from '../src/rollup.js';
 
@@ -220,26 +228,41 @@ describe('computeStatsCache — latest stable release downloads', () => {
 });
 
 describe('computeStatsCache — stars', () => {
-  it('produces correct 7d and 30d deltas independently', () => {
+  it('produces correct 7d and 30d deltas from repo_star_history buckets', () => {
     const db = freshDb();
     const r = seedRepo(db, 'a', 'b');
-    seedRepoSnapshot(db, r, '2026-05-22', 100); // 30d ago
-    seedRepoSnapshot(db, r, '2026-06-14', 120); // 7d ago
-    seedRepoSnapshot(db, r, '2026-06-21', 130); // today
+    // 30d ago: 5 stars. Outside the 7d window, inside the 30d window.
+    starHistory.upsertStarsAdded(db, r, '2026-05-22', 5);
+    // 14d ago: 15 stars. Outside 7d, inside 30d.
+    starHistory.upsertStarsAdded(db, r, '2026-06-07', 15);
+    // 4d ago: 7 stars. Inside both windows.
+    starHistory.upsertStarsAdded(db, r, '2026-06-17', 7);
+    // Today: 3 stars. Inside both windows.
+    starHistory.upsertStarsAdded(db, r, '2026-06-21', 3);
     computeStatsCache(db, { asOfDate: '2026-06-21', nowIso: 'test' });
     const row = statsCache.getStatsCacheRow(db, r);
-    expect(row?.star_delta_7d).toBe(10);
-    expect(row?.star_delta_30d).toBe(30);
+    expect(row?.star_delta_7d).toBe(10); // 7 + 3
+    expect(row?.star_delta_30d).toBe(30); // 5 + 15 + 7 + 3
   });
 
-  it('day-1 (only today): both deltas are 0', () => {
+  it('day-1 (no star history): both deltas are 0', () => {
     const db = freshDb();
     const r = seedRepo(db, 'a', 'b');
-    seedRepoSnapshot(db, r, '2026-06-21', 130);
     computeStatsCache(db, { asOfDate: '2026-06-21', nowIso: 'test' });
     const row = statsCache.getStatsCacheRow(db, r);
     expect(row?.star_delta_7d).toBe(0);
     expect(row?.star_delta_30d).toBe(0);
+  });
+
+  it('handles negative deltas (unstars) correctly', () => {
+    const db = freshDb();
+    const r = seedRepo(db, 'a', 'b');
+    starHistory.upsertStarsAdded(db, r, '2026-06-20', 10);
+    starHistory.upsertStarsAdded(db, r, '2026-06-21', -3); // unstar today
+    computeStatsCache(db, { asOfDate: '2026-06-21', nowIso: 'test' });
+    const row = statsCache.getStatsCacheRow(db, r);
+    expect(row?.star_delta_7d).toBe(7);
+    expect(row?.star_delta_30d).toBe(7);
   });
 });
 
