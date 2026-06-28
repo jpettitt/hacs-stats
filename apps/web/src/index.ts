@@ -282,12 +282,8 @@ app.get('/r/:owner/:name', (c) => {
     );
   }
   const starsSeries = time('starsSeries', () => starsSeriesForRepo(detail.id));
-  const releaseRows = time('releaseRows', () =>
-    leaders.releaseDownloadsForRepo(db, detail.id, 25),
-  );
-  const relatedRepos = time('relatedRepos', () =>
-    repos.listRepoIdentsByOwner(db, owner, fullName),
-  );
+  const releaseRows = time('releaseRows', () => leaders.releaseDownloadsForRepo(db, detail.id, 25));
+  const relatedRepos = time('relatedRepos', () => repos.listRepoIdentsByOwner(db, owner, fullName));
   const body = renderRepoDetail({
     detail: {
       full_name: detail.full_name,

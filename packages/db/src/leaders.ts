@@ -418,20 +418,45 @@ export interface ReleaseDownloadRow {
   has_asset: number;
 }
 
+/** Cached most-recent asset-snapshot date. Recomputed lazily; the daily
+ * scrape advances it but the readonly web process can also just
+ * re-query when it changes. Keeping it in a module-level cache avoids
+ * a SELECT MAX over the snapshots table on every repo page render —
+ * that subquery was being inlined into the correlated query and
+ * re-evaluated 30 times per page. */
+let cachedLatestSnapshotDate: { value: string | null; cachedAt: number } | null = null;
+const LATEST_SNAPSHOT_CACHE_MS = 60_000;
+
+function latestSnapshotDate(db: Db): string | null {
+  const now = Date.now();
+  if (
+    cachedLatestSnapshotDate &&
+    now - cachedLatestSnapshotDate.cachedAt < LATEST_SNAPSHOT_CACHE_MS
+  ) {
+    return cachedLatestSnapshotDate.value;
+  }
+  const row = db.raw
+    .prepare<[], { d: string | null }>(
+      'SELECT MAX(snapshot_date) AS d FROM release_asset_snapshots',
+    )
+    .get();
+  cachedLatestSnapshotDate = { value: row?.d ?? null, cachedAt: now };
+  return cachedLatestSnapshotDate.value;
+}
+
 export function releaseDownloadsForRepo(db: Db, repoId: number, limit = 30): ReleaseDownloadRow[] {
-  // Correlated subqueries per release rather than a JOIN+GROUP BY: the
-  // planner kept picking the secondary date-only index on
-  // release_asset_snapshots and scanning today's full snapshot set per
-  // release, which on the VPS (a few thousand assets per day across the
-  // catalogue) was 60-500ms per page. Each correlated subquery instead
-  // hits the PK (release_id, asset_name, snapshot_date) and is O(log N).
-  // Limit caps the subquery count at 30 so total work stays bounded.
+  // Correlated subqueries per release. Two indexes back this:
+  //   - idx_releases_repo_published — seeks by repo_id, ordered by
+  //     published_at DESC so the LIMIT 30 is a cheap top-N scan.
+  //   - idx_asset_snapshots_release_date — seeks both release_id AND
+  //     snapshot_date in one index lookup; previously SQLite was using
+  //     one or the other and scanning the rest.
+  // latestSnapshotDate is computed once per minute and passed as a
+  // parameter so it's not re-evaluated 30 times per page render.
+  const today = latestSnapshotDate(db);
   return db.raw
-    .prepare<[number, number, number], ReleaseDownloadRow>(
-      `WITH latest_date AS (
-        SELECT MAX(snapshot_date) AS d FROM release_asset_snapshots
-      ),
-      hacs_filter AS (
+    .prepare<[number, string | null, number, number], ReleaseDownloadRow>(
+      `WITH hacs_filter AS (
         SELECT hacs_filename FROM repos WHERE id = ?
       )
       SELECT
@@ -446,7 +471,7 @@ export function releaseDownloadsForRepo(db: Db, repoId: number, limit = 30): Rel
           )
           FROM release_asset_snapshots ras
           WHERE ras.release_id = rel.id
-            AND ras.snapshot_date = (SELECT d FROM latest_date)
+            AND ras.snapshot_date = ?
         ), 0) AS downloads,
         -- has_asset is "did we EVER snapshot any asset for this release",
         -- not "did we snapshot one today". Important when a repo's assets
@@ -461,5 +486,5 @@ export function releaseDownloadsForRepo(db: Db, repoId: number, limit = 30): Rel
       ORDER BY rel.published_at DESC
       LIMIT ?`,
     )
-    .all(repoId, repoId, limit);
+    .all(repoId, today, repoId, limit);
 }
