@@ -16,6 +16,7 @@
 import type { Db } from '@hacs-stats/db';
 import { repos, snapshots } from '@hacs-stats/db';
 import { discoverCustomRepos } from '../apps/scraper/src/discovery.js';
+import { fetchAndStoreStarHistory } from '../apps/scraper/src/stargazers.js';
 
 export interface AutoApproveEnv {
   off: boolean;
@@ -123,6 +124,13 @@ export async function runOneSweep(
 
   let autoApprovedCount = 0;
   let queuedCount = 0;
+  // Collected during the tx, drained after — fetchAndStoreStarHistory
+  // makes REST calls and can't run inside better-sqlite3's synchronous
+  // transaction. Doing the star-history backfill at discover time means
+  // newly auto-approved repos have a chart immediately (otherwise the
+  // /r/<owner>/<name> page falls back to "one data point" until the
+  // next nightly scrape's step 2.5 fills the history).
+  const starsToBackfill: Array<{ repoId: number; fullName: string; stars: number }> = [];
   const tx = db.raw.transaction(() => {
     const nowIso = new Date().toISOString();
     const today = nowIso.slice(0, 10);
@@ -148,6 +156,7 @@ export async function runOneSweep(
             openIssues: 0,
             lastCommitAt: c.pushedAt ?? null,
           });
+          starsToBackfill.push({ repoId, fullName: c.fullName, stars: c.stars });
         }
         insertQueueAccepted.run(
           c.htmlUrl,
@@ -172,6 +181,23 @@ export async function runOneSweep(
     }
   });
   tx();
+
+  // After the transaction commits, backfill star history for each
+  // auto-approved repo. Sequential — handful of repos per discover
+  // run, ~10 REST calls each for typical sizes. Failures are
+  // logged-and-swallowed so one bad fetch doesn't sink the whole sweep.
+  for (const s of starsToBackfill) {
+    try {
+      await fetchAndStoreStarHistory(db, s.repoId, s.fullName, s.stars, {
+        token,
+        maxPagesPerScrape: 20,
+      });
+    } catch (err) {
+      console.warn(
+        `[discover-core] star-history backfill failed for ${s.fullName}: ${(err as Error).message}`,
+      );
+    }
+  }
 
   return {
     inspected: result.inspected,

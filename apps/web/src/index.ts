@@ -10,6 +10,7 @@ import type { RepoKind } from '@hacs-stats/shared';
 import { REPO_KINDS } from '@hacs-stats/shared';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import { ADMIN_QUEUE_JS } from './admin-queue-script.js';
 import { FAVICON_LIVE } from './favicon.js';
 import { renderLayout } from './layout.js';
 import { renderAboutPage } from './pages/about.js';
@@ -161,6 +162,16 @@ app.get('/favicon.svg', (c) => {
   c.header('Content-Type', 'image/svg+xml');
   c.header('Cache-Control', 'public, max-age=86400');
   return c.body(FAVICON_LIVE);
+});
+
+// Small progressive-enhancement script for /admin/queue — intercepts
+// Accept/Reject submits to drop the row in place instead of reloading
+// the page. Served from /static/ so script-src 'self' covers it
+// without another CSP hash.
+app.get('/static/admin-queue.js', (c) => {
+  c.header('Content-Type', 'application/javascript');
+  c.header('Cache-Control', 'public, max-age=300');
+  return c.body(ADMIN_QUEUE_JS);
 });
 
 app.get('/', (c) => {
@@ -601,17 +612,26 @@ app.post('/admin/queue/decide', async (c) => {
   const body = await c.req.parseBody();
   const url = typeof body.url === 'string' ? body.url : '';
   const decision = typeof body.decision === 'string' ? body.decision : '';
+  // Two response modes:
+  //   - ?json=1 from the inline page script → 204/4xx without redirect,
+  //     so the row can be removed in place without a full page reload.
+  //   - default (no-JS fallback): the existing 303 → /admin/queue
+  //     redirect so the page behaves the same when JS is off.
+  const wantJson = c.req.query('json') === '1';
+  const ok = (msg: string) =>
+    wantJson ? c.body(null, 204) : c.redirect(`/admin/queue?msg=${encodeURIComponent(msg)}`, 303);
+  const fail = (msg: string, status: 400 | 422 = 400) =>
+    wantJson ? c.text(msg, status) : c.redirect(`/admin/queue?msg=${encodeURIComponent(msg)}`, 303);
+
   if (!url || (decision !== 'accept' && decision !== 'reject')) {
-    return c.redirect('/admin/queue?msg=bad+request', 303);
+    return fail('bad request');
   }
   if (decision === 'reject') {
     discoveryQueue.setQueueStatus(rwDb, url, 'rejected', null);
-    return c.redirect('/admin/queue?msg=rejected', 303);
+    return ok('rejected');
   }
   const m = /github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(url);
-  if (!m || !m[1] || !m[2]) {
-    return c.redirect('/admin/queue?msg=cant+parse+url', 303);
-  }
+  if (!m || !m[1] || !m[2]) return fail("can't parse url", 422);
   const owner = m[1];
   const name = m[2];
   const item = db.raw
@@ -622,7 +642,7 @@ app.post('/admin/queue/decide', async (c) => {
   const kindMatch = item?.notes ? /(?:^|;\s*)kind=([a-z_]+)/.exec(item.notes) : null;
   const kindFromNotes = kindMatch?.[1] ?? 'integration';
   if (!(REPO_KINDS as readonly string[]).includes(kindFromNotes)) {
-    return c.redirect('/admin/queue?msg=invalid+kind+in+notes', 303);
+    return fail('invalid kind in notes', 422);
   }
   const source = item?.source === 'user_submission' ? 'submitted' : 'discovered';
   repos.upsertRepo(rwDb, {
@@ -632,7 +652,7 @@ app.post('/admin/queue/decide', async (c) => {
     source,
   });
   discoveryQueue.setQueueStatus(rwDb, url, 'accepted', null);
-  return c.redirect(`/admin/queue?msg=accepted+${owner}/${name}`, 303);
+  return ok(`accepted ${owner}/${name}`);
 });
 
 // JSON API — surface enough for clients to render their own dashboards.

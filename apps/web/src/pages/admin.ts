@@ -231,5 +231,6 @@ export function renderAdminPage(props: AdminPageProps): string {
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    ${pagination}`;
+    ${pagination}
+    <script src="/static/admin-queue.js" defer></script>`;
 }
