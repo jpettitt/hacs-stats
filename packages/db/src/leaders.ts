@@ -419,12 +419,15 @@ export interface ReleaseDownloadRow {
 }
 
 export function releaseDownloadsForRepo(db: Db, repoId: number, limit = 30): ReleaseDownloadRow[] {
-  // Attribution: MAX over eligible assets. When hacs_filename is set, only
-  // the matching asset is eligible (it's the file HACS actually fetches);
-  // otherwise every asset is eligible and MAX picks the dominant one as
-  // the install proxy. Mirrors the rollup query in apps/scraper/src/rollup.ts.
+  // Correlated subqueries per release rather than a JOIN+GROUP BY: the
+  // planner kept picking the secondary date-only index on
+  // release_asset_snapshots and scanning today's full snapshot set per
+  // release, which on the VPS (a few thousand assets per day across the
+  // catalogue) was 60-500ms per page. Each correlated subquery instead
+  // hits the PK (release_id, asset_name, snapshot_date) and is O(log N).
+  // Limit caps the subquery count at 30 so total work stays bounded.
   return db.raw
-    .prepare<[number, number], ReleaseDownloadRow>(
+    .prepare<[number, number, number], ReleaseDownloadRow>(
       `WITH latest_date AS (
         SELECT MAX(snapshot_date) AS d FROM release_asset_snapshots
       ),
@@ -433,30 +436,30 @@ export function releaseDownloadsForRepo(db: Db, repoId: number, limit = 30): Rel
       )
       SELECT
         rel.tag, rel.name, rel.body, rel.published_at, rel.is_prerelease, rel.html_url,
-        COALESCE(MAX(
-          CASE
-            WHEN (SELECT hacs_filename FROM hacs_filter) IS NULL
-              OR ras.asset_name = (SELECT hacs_filename FROM hacs_filter)
-              THEN ras.download_count
-          END
+        COALESCE((
+          SELECT MAX(
+            CASE
+              WHEN (SELECT hacs_filename FROM hacs_filter) IS NULL
+                OR ras.asset_name = (SELECT hacs_filename FROM hacs_filter)
+                THEN ras.download_count
+            END
+          )
+          FROM release_asset_snapshots ras
+          WHERE ras.release_id = rel.id
+            AND ras.snapshot_date = (SELECT d FROM latest_date)
         ), 0) AS downloads,
         -- has_asset is "did we EVER snapshot any asset for this release",
         -- not "did we snapshot one today". Important when a repo's assets
-        -- weren't part of today's scrape (skipped, partial run, asset
-        -- table truncated) — otherwise the per-release row reads "no
-        -- asset" and the downloads column hides for repos that have
-        -- assets historically.
+        -- weren't part of today's scrape — otherwise the per-release row
+        -- reads "no asset" and the downloads column hides for repos
+        -- that have assets historically.
         EXISTS (
           SELECT 1 FROM release_asset_snapshots ras2 WHERE ras2.release_id = rel.id
         ) AS has_asset
       FROM releases rel
-      LEFT JOIN release_asset_snapshots ras
-        ON ras.release_id = rel.id AND ras.snapshot_date = (SELECT d FROM latest_date)
       WHERE rel.repo_id = ?
-      GROUP BY rel.id
       ORDER BY rel.published_at DESC
-      LIMIT 30`,
+      LIMIT ?`,
     )
-    .all(repoId, repoId)
-    .slice(0, limit);
+    .all(repoId, repoId, limit);
 }

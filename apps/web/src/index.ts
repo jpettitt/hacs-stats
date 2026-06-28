@@ -257,7 +257,21 @@ app.get('/r/:owner/:name', (c) => {
       400,
     );
   }
-  const detail = leaders.repoDetailByFullName(db, fullName);
+  // ?profile=1 emits an X-Timing header with per-section ms so we can
+  // pinpoint slow stages on the prod DB without sprinkling console.log.
+  // Cheap when off (profile is undefined). Stays opt-in so normal page
+  // loads don't pay the high-resolution clock cost.
+  const profile = c.req.query('profile') === '1';
+  const timings: Record<string, number> = {};
+  const time = <T>(label: string, fn: () => T): T => {
+    if (!profile) return fn();
+    const t0 = performance.now();
+    const out = fn();
+    timings[label] = Math.round((performance.now() - t0) * 100) / 100;
+    return out;
+  };
+
+  const detail = time('repoDetail', () => leaders.repoDetailByFullName(db, fullName));
   if (!detail) {
     return c.html(
       renderLayout({
@@ -267,9 +281,13 @@ app.get('/r/:owner/:name', (c) => {
       404,
     );
   }
-  const starsSeries = starsSeriesForRepo(detail.id);
-  const releaseRows = leaders.releaseDownloadsForRepo(db, detail.id, 25);
-  const relatedRepos = repos.listRepoIdentsByOwner(db, owner, fullName);
+  const starsSeries = time('starsSeries', () => starsSeriesForRepo(detail.id));
+  const releaseRows = time('releaseRows', () =>
+    leaders.releaseDownloadsForRepo(db, detail.id, 25),
+  );
+  const relatedRepos = time('relatedRepos', () =>
+    repos.listRepoIdentsByOwner(db, owner, fullName),
+  );
   const body = renderRepoDetail({
     detail: {
       full_name: detail.full_name,
@@ -305,6 +323,14 @@ app.get('/r/:owner/:name', (c) => {
   const title = detail.hacs_name
     ? `${detail.hacs_name} (${fullName}) — hacs-stats`
     : `${fullName} — hacs-stats`;
+  if (profile) {
+    c.header(
+      'Server-Timing',
+      Object.entries(timings)
+        .map(([k, v]) => `${k};dur=${v}`)
+        .join(', '),
+    );
+  }
   return c.html(renderLayout({ title, body }));
 });
 
