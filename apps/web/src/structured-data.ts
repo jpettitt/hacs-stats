@@ -3,15 +3,17 @@
  *
  * What each page carries:
  *   home            → WebSite (site identity + SearchAction)
- *   /r/:owner/:name → BreadcrumbList + SoftwareApplication (Google's
- *                     "Software App" rich result: name + offers satisfy
- *                     the required-property rule; free OSS ⇒ price 0)
+ *   /r/:owner/:name → BreadcrumbList + SoftwareApplication
  *   /owner/:owner   → BreadcrumbList
  *
- * Deliberately absent: aggregateRating. We have stars, not reviews —
- * mapping stars onto a rating scale would fabricate data and risks a
- * structured-data manual action. InteractionCounter is the honest home
- * for the star count.
+ * Deliberately absent: aggregateRating/review. We have stars, not
+ * reviews — mapping stars onto a rating scale would fabricate data and
+ * risks a structured-data manual action. InteractionCounter is the
+ * honest home for the star count. Consequence (per Google's Software
+ * App docs as of 2026-08): a rating or review is REQUIRED for the
+ * Software App rich-result treatment, so these pages won't get that
+ * SERP badge — the markup is kept as valid entity metadata, and
+ * BreadcrumbList (whose requirements we do meet) is the visible win.
  */
 
 import { type SafeHtml, raw } from './safe-html.js';
