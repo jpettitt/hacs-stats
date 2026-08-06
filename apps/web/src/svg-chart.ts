@@ -15,6 +15,7 @@ import { extent } from 'd3-array';
 import { scaleLinear, scaleTime } from 'd3-scale';
 import { curveStepAfter, line as d3line } from 'd3-shape';
 import { utcFormat } from 'd3-time-format';
+import { type SafeHtml, raw } from './safe-html.js';
 
 export interface Point {
   /** ISO 8601 timestamp (e.g. '2026-06-22T00:00:00Z' or any string
@@ -62,12 +63,19 @@ function escapeXml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function emptyChart(width: number, height: number, msg: string, className: string): string {
-  return `<svg viewBox="0 0 ${width} ${height}" class="${className}" role="img" aria-label="${escapeXml(
-    msg,
-  )}"><text x="${width / 2}" y="${height / 2}" text-anchor="middle" class="chart-empty">${escapeXml(
-    msg,
-  )}</text></svg>`;
+// Both render paths return SafeHtml via raw(): every assembled byte is a
+// number, d3-generated path data ([MLC0-9.,-] only), or an escapeXml'd
+// label. className/ariaLabel are caller-supplied CODE CONSTANTS — if a
+// caller ever wants to pass data-derived strings there, migrate this file
+// to the html`` builder instead of widening the raw() claim.
+function emptyChart(width: number, height: number, msg: string, className: string): SafeHtml {
+  return raw(
+    `<svg viewBox="0 0 ${width} ${height}" class="${className}" role="img" aria-label="${escapeXml(
+      msg,
+    )}"><text x="${width / 2}" y="${height / 2}" text-anchor="middle" class="chart-empty">${escapeXml(
+      msg,
+    )}</text></svg>`,
+  );
 }
 
 /** y-axis label format. K-suffix above 1000 so we don't smush "12345"
@@ -87,7 +95,7 @@ function makeXFormatter(firstMs: number, lastMs: number): (d: Date) => string {
   return utcFormat('%b %d');
 }
 
-export function renderLineChart(points: Point[], opts: LineChartOptions = {}): string {
+export function renderLineChart(points: Point[], opts: LineChartOptions = {}): SafeHtml {
   const width = opts.width ?? DEFAULTS.width;
   const height = opts.height ?? DEFAULTS.height;
   const pad = opts.padding ?? DEFAULTS.padding;
@@ -191,7 +199,7 @@ export function renderLineChart(points: Point[], opts: LineChartOptions = {}): s
   // against the gridlines.
   const spines = `<line x1="${xLeft}" x2="${xLeft}" y1="${yTop}" y2="${yBottom}" class="chart-axis-line"/><line x1="${xLeft}" x2="${xRight}" y1="${yBottom}" y2="${yBottom}" class="chart-axis-line"/>`;
 
-  return `<svg viewBox="0 0 ${width} ${height}" class="${className}" role="img" aria-label="${escapeXml(
+  return raw(`<svg viewBox="0 0 ${width} ${height}" class="${className}" role="img" aria-label="${escapeXml(
     ariaLabel,
   )}">
   ${yGrid}
@@ -200,5 +208,5 @@ export function renderLineChart(points: Point[], opts: LineChartOptions = {}): s
   ${yLabels}
   ${xLabels}
   <path d="${path}" class="chart-line" fill="none"/>
-</svg>`;
+</svg>`);
 }

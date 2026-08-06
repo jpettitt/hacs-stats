@@ -165,6 +165,14 @@ high-confidence tail; admin can promote remaining items to `repos`.
 
 - [x] SEO: `/sitemap.xml` generated from the DB (repos + owners + static
       pages, per-repo lastmod) and `/robots.txt` advertising it
+- [x] SEO: schema.org JSON-LD (WebSite, SoftwareApplication, BreadcrumbList),
+      canonical links, meta descriptions. No aggregateRating — stars aren't
+      reviews; faking a rating scale risks a manual action
+- [x] XSS hardening: safe-by-construction html`` template tag (safe-html.ts);
+      all render functions return SafeHtml, renderLayout rejects raw strings
+      at compile time. Verified via route-level byte-diff against the old
+      renderer (only diffs: correct &amp; escaping in hrefs, JSON-LD unicode
+      escapes)
 - [ ] Per-repo "embed badge" (SVG download/star counts)
 - [ ] "For authors" page with opt-out instructions
 - [ ] Outreach to HACS team for endorsement / clarification of relationship

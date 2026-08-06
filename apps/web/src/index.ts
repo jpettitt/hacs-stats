@@ -11,6 +11,7 @@ import { REPO_KINDS } from '@hacs-stats/shared';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { ADMIN_QUEUE_JS } from './admin-queue-script.js';
+import { KIND_LABEL } from './components.js';
 import { FAVICON_LIVE } from './favicon.js';
 import { notModifiedSince, parseTimestamp, setCacheHeaders } from './http-cache.js';
 import { renderLayout } from './layout.js';
@@ -24,8 +25,10 @@ import { renderPrivacyPage } from './pages/privacy.js';
 import { renderRepoDetail } from './pages/repo.js';
 import { renderSearchPage } from './pages/search.js';
 import { renderSubmitPage } from './pages/submit.js';
+import { html } from './safe-html.js';
 import { isSafeRepoFullName } from './sanitize.js';
 import { renderSitemapXml, toLastmodDate } from './sitemap.js';
+import { breadcrumbLd, softwareAppLd, webSiteLd } from './structured-data.js';
 
 const DATABASE_PATH = resolveDatabasePath();
 const PORT = Number(process.env.PORT ?? 3000);
@@ -256,6 +259,10 @@ app.get('/', (c) => {
     renderLayout({
       title: 'hacs-stats — Home Assistant Community Store dashboard',
       navActive: 'home',
+      canonical: `${SITE_ORIGIN}/`,
+      metaDescription:
+        'Unofficial usage stats for HACS — stars, download trends, and release history for every Home Assistant community integration, plugin, and theme.',
+      jsonLd: [webSiteLd(SITE_ORIGIN)],
       body,
     }),
   );
@@ -266,7 +273,16 @@ app.get('/categories', (c) => {
   if (notModifiedSince(c, lm)) return c.body(null, 304);
   setCacheHeaders(c, lm);
   const body = renderCategoriesIndex({ totals: repos.categoryCounts(db) });
-  return c.html(renderLayout({ title: 'Categories — hacs-stats', navActive: 'categories', body }));
+  return c.html(
+    renderLayout({
+      title: 'Categories — hacs-stats',
+      navActive: 'categories',
+      canonical: `${SITE_ORIGIN}/categories`,
+      metaDescription:
+        'Browse HACS repositories by category — integrations, plugins (Lovelace cards), themes, AppDaemon apps, and more.',
+      body,
+    }),
+  );
 });
 
 // /category/:kind is now an alias for /search?kind=…&sort=stars. There's
@@ -281,7 +297,7 @@ app.get('/category/:kind', (c) => {
       renderLayout({
         title: 'Unknown category — hacs-stats',
         navActive: 'categories',
-        body: `<p>Unknown category. <a href="/categories">See the list</a>.</p>`,
+        body: html`<p>Unknown category. <a href="/categories">See the list</a>.</p>`,
       }),
       404,
     );
@@ -299,7 +315,7 @@ app.get('/owner/:owner', (c) => {
     return c.html(
       renderLayout({
         title: 'Invalid owner — hacs-stats',
-        body: `<p>That doesn't look like a valid GitHub owner.</p>`,
+        body: html`<p>That doesn't look like a valid GitHub owner.</p>`,
       }),
       400,
     );
@@ -311,6 +327,14 @@ app.get('/owner/:owner', (c) => {
   return c.html(
     renderLayout({
       title: `${owner} — hacs-stats`,
+      canonical: `${SITE_ORIGIN}/owner/${owner}`,
+      metaDescription: `HACS repositories by ${owner} — Home Assistant community integrations, plugins, and themes with stars and download trends.`,
+      jsonLd: [
+        breadcrumbLd([
+          { name: 'Home', url: `${SITE_ORIGIN}/` },
+          { name: owner, url: `${SITE_ORIGIN}/owner/${owner}` },
+        ]),
+      ],
       body: renderOwnerPage({ owner, repos: ownerRepos }),
     }),
   );
@@ -327,7 +351,7 @@ app.get('/r/:owner/:name', (c) => {
     return c.html(
       renderLayout({
         title: 'Invalid repo — hacs-stats',
-        body: `<p>That doesn't look like a valid <code>owner/repo</code> identifier.</p>`,
+        body: html`<p>That doesn't look like a valid <code>owner/repo</code> identifier.</p>`,
       }),
       400,
     );
@@ -351,7 +375,7 @@ app.get('/r/:owner/:name', (c) => {
     return c.html(
       renderLayout({
         title: 'Not found — hacs-stats',
-        body: `<p>We don't have a repo called <code>${fullName}</code> in our catalogue.</p>`,
+        body: html`<p>We don't have a repo called <code>${fullName}</code> in our catalogue.</p>`,
       }),
       404,
     );
@@ -408,7 +432,40 @@ app.get('/r/:owner/:name', (c) => {
         .join(', '),
     );
   }
-  return c.html(renderLayout({ title, body }));
+  const pageUrl = `${SITE_ORIGIN}/r/${fullName}`;
+  const displayName = detail.hacs_name ?? fullName;
+  const kindLabel = KIND_LABEL[detail.kind] ?? detail.kind;
+  return c.html(
+    renderLayout({
+      title,
+      canonical: pageUrl,
+      metaDescription:
+        detail.description?.slice(0, 160) ??
+        `${displayName} — Home Assistant ${kindLabel} via HACS. Stars, download trends, and release history.`,
+      jsonLd: [
+        breadcrumbLd([
+          { name: 'Home', url: `${SITE_ORIGIN}/` },
+          {
+            name: kindLabel,
+            url: `${SITE_ORIGIN}/search?kind=${encodeURIComponent(detail.kind)}&sort=stars`,
+          },
+          { name: displayName, url: pageUrl },
+        ]),
+        softwareAppLd({
+          fullName,
+          hacsName: detail.hacs_name,
+          description: detail.description,
+          kindLabel,
+          stars: detail.stars,
+          latestReleaseTag: detail.latest_release_tag,
+          lastCommitAt: detail.last_commit_at,
+          pageUrl,
+          githubUrl: `https://github.com/${fullName}`,
+        }),
+      ],
+      body,
+    }),
+  );
 });
 
 const SEARCH_PAGE_SIZE = 50;
@@ -483,6 +540,7 @@ app.get('/pending', (c) => {
   return c.html(
     renderLayout({
       title: 'Pending repos — hacs-stats',
+      canonical: `${SITE_ORIGIN}/pending`,
       body: renderPendingPage({ rows }),
     }),
   );
@@ -496,6 +554,7 @@ app.get('/removed', (c) => {
   return c.html(
     renderLayout({
       title: 'Removed repos — hacs-stats',
+      canonical: `${SITE_ORIGIN}/removed`,
       body: renderRemovedPage({ rows }),
     }),
   );
@@ -503,12 +562,25 @@ app.get('/removed', (c) => {
 
 app.get('/about', (c) =>
   c.html(
-    renderLayout({ title: 'About — hacs-stats', navActive: 'about', body: renderAboutPage() }),
+    renderLayout({
+      title: 'About — hacs-stats',
+      navActive: 'about',
+      canonical: `${SITE_ORIGIN}/about`,
+      metaDescription:
+        'How hacs-stats counts HACS downloads and stars, where the data comes from, and why downloads are a proxy for installs.',
+      body: renderAboutPage(),
+    }),
   ),
 );
 
 app.get('/privacy', (c) =>
-  c.html(renderLayout({ title: 'Privacy — hacs-stats', body: renderPrivacyPage() })),
+  c.html(
+    renderLayout({
+      title: 'Privacy — hacs-stats',
+      canonical: `${SITE_ORIGIN}/privacy`,
+      body: renderPrivacyPage(),
+    }),
+  ),
 );
 
 // ---------------------------------------------------------------------------
@@ -519,6 +591,8 @@ app.get('/submit', (c) =>
   c.html(
     renderLayout({
       title: 'Submit a repo — hacs-stats',
+      canonical: `${SITE_ORIGIN}/submit`,
+      metaDescription: 'Submit a custom HACS repository to the hacs-stats catalogue for tracking.',
       body: renderSubmitPage({}),
     }),
   ),

@@ -1,4 +1,4 @@
-import { escapeHtml } from '../sanitize.js';
+import { type SafeHtml, html } from '../safe-html.js';
 
 export interface SubmitPageProps {
   /** Sticky value from the prior submission so the user doesn't retype. */
@@ -7,14 +7,13 @@ export interface SubmitPageProps {
   message?: { kind: 'ok' | 'err'; text: string };
 }
 
-export function renderSubmitPage(props: SubmitPageProps): string {
-  const safeVal = escapeHtml(props.value ?? '');
+export function renderSubmitPage(props: SubmitPageProps): SafeHtml {
   const msg = props.message
-    ? `<p class="${props.message.kind === 'ok' ? 'lead' : 'lead muted'}" style="${
+    ? html`<p class="${props.message.kind === 'ok' ? 'lead' : 'lead muted'}" style="${
         props.message.kind === 'ok' ? '' : 'color: var(--danger);'
-      }">${escapeHtml(props.message.text)}</p>`
-    : '';
-  return `
+      }">${props.message.text}</p>`
+    : html``;
+  return html`
     <h2>Submit a custom HACS repo</h2>
     <p class="lead">
       Got a HACS repo that isn't in the
@@ -28,7 +27,7 @@ export function renderSubmitPage(props: SubmitPageProps): string {
     <form class="submit-form" action="/submit" method="post">
       <div class="submit-field">
         <label for="repo">GitHub repo (<code>owner/repo</code>)</label>
-        <input id="repo" type="text" name="repo" value="${safeVal}"
+        <input id="repo" type="text" name="repo" value="${props.value ?? ''}"
                placeholder="e.g. piitaya/lovelace-mushroom"
                autocomplete="off" autocapitalize="none" spellcheck="false" required>
       </div>

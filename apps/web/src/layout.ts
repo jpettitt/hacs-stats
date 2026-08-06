@@ -1,4 +1,5 @@
-import { escapeHtml } from './sanitize.js';
+import { type SafeHtml, html, raw } from './safe-html.js';
+import { jsonLdScript } from './structured-data.js';
 
 export interface LayoutProps {
   /** Document title — appears in <title> and browser tab. */
@@ -9,8 +10,17 @@ export interface LayoutProps {
   navActive?: 'home' | 'categories' | 'submit' | 'about';
   /** Optional inline search-box value to keep the query visible after submit. */
   searchValue?: string;
-  /** Pre-rendered HTML body (escape your own inputs upstream!). */
-  body: string;
+  /** Page body. SafeHtml ONLY — this type is the whole point: a raw
+   * string can't reach the response without going through the html``
+   * escaper or an explicit raw() claim. */
+  body: SafeHtml;
+  /** <meta name="description"> — feeds the SERP snippet. ~160 chars. */
+  metaDescription?: string;
+  /** Absolute canonical URL for this page. */
+  canonical?: string;
+  /** schema.org JSON-LD blocks, rendered as one data-island script tag.
+   * Values may contain untrusted strings — jsonLdScript escapes them. */
+  jsonLd?: Array<Record<string, unknown>>;
 }
 
 /**
@@ -551,8 +561,8 @@ function navLink(
   label: string,
   key: NonNullable<LayoutProps['navActive']>,
   active?: LayoutProps['navActive'],
-): string {
-  return `<a href="${href}" class="${active === key ? 'active' : ''}">${escapeHtml(label)}</a>`;
+): SafeHtml {
+  return html`<a href="${href}" class="${active === key ? 'active' : ''}">${label}</a>`;
 }
 
 // Google Analytics 4. The inline script body is hashed into the CSP
@@ -571,22 +581,25 @@ const GTAG = `
 </script>
 `;
 
+// Terminal render boundary: composes SafeHtml throughout and only
+// .toString()s at the very end for c.html(). CSS and GTAG are the two
+// raw() claims — compile-time constants, no data interpolated.
 export function renderLayout(props: LayoutProps): string {
   const heading = props.pageHeading ?? 'hacs-stats';
-  const safeSearchVal = escapeHtml(props.searchValue ?? '');
-  return `<!doctype html>
+  const safeSearchVal = props.searchValue ?? '';
+  return html`<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escapeHtml(props.title)}</title>
+  <title>${props.title}</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <style>${CSS}</style>
-  ${GTAG}
+${props.canonical ? html`  <link rel="canonical" href="${props.canonical}">\n` : ''}${props.metaDescription ? html`  <meta name="description" content="${props.metaDescription}">\n` : ''}${props.jsonLd && props.jsonLd.length > 0 ? html`  ${jsonLdScript(props.jsonLd)}\n` : ''}  <style>${raw(CSS)}</style>
+  ${raw(GTAG)}
 </head>
 <body>
   <header class="topbar">
-    <h1 class="brand"><a href="/"><img class="brand-mark" src="/favicon.svg" alt="" width="28" height="28"> ${escapeHtml(heading)}</a> <span class="badge" tabindex="0" data-tip="hacs-stats is an unofficial, independent dashboard. Not affiliated with HACS (the Home Assistant Community Store) or the HACS maintainers. Data is sourced from public GitHub APIs.">unofficial</span></h1>
+    <h1 class="brand"><a href="/"><img class="brand-mark" src="/favicon.svg" alt="" width="28" height="28"> ${heading}</a> <span class="badge" tabindex="0" data-tip="hacs-stats is an unofficial, independent dashboard. Not affiliated with HACS (the Home Assistant Community Store) or the HACS maintainers. Data is sourced from public GitHub APIs.">unofficial</span></h1>
     <nav>
       ${navLink('/', 'Home', 'home', props.navActive)}
       ${navLink('/categories', 'Categories', 'categories', props.navActive)}
@@ -612,5 +625,5 @@ export function renderLayout(props: LayoutProps): string {
     <a href="https://github.com/jpettitt/hacs-stats" target="_blank" rel="noopener noreferrer">Source (AGPL-3.0)</a>
   </footer>
 </body>
-</html>`;
+</html>`.toString();
 }

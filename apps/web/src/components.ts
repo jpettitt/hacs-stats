@@ -1,4 +1,5 @@
-import { escapeHtml, safeGithubRepoUrl } from './sanitize.js';
+import { type HtmlValue, type SafeHtml, html, joinHtml } from './safe-html.js';
+import { safeGithubRepoUrl } from './sanitize.js';
 
 /**
  * A minimal shape every list/table renderer reads. The various DB queries
@@ -38,7 +39,9 @@ export interface RowForList {
   latest_release_at?: string | null;
 }
 
-const KIND_LABEL: Record<string, string> = {
+// Exported raw for JSON-LD (structured data wants plain strings, not
+// HTML-escaped ones — JSON.stringify handles its own escaping there).
+export const KIND_LABEL: Record<string, string> = {
   integration: 'Integration',
   plugin: 'Plugin',
   theme: 'Theme',
@@ -79,24 +82,23 @@ export function fmtDelta(n: number): string {
  * otherwise an inert <span> (defence-in-depth — the same name reaches the
  * URL path and we don't want anything weird in there).
  */
-export function repoLink(fullName: string, hacsName?: string | null): string {
-  const safeFull = escapeHtml(fullName);
+export function repoLink(fullName: string, hacsName?: string | null): SafeHtml {
   const ghUrl = safeGithubRepoUrl(fullName);
   if (!ghUrl) {
     // Invalid name — render plain text, no link. We deliberately do NOT
     // surface hacs_name here either, because if the full_name is unsafe the
     // hacs_name is also untrusted (same data plane).
-    return `<span class="repo-name unsafe">${safeFull}</span>`;
+    return html`<span class="repo-name unsafe">${fullName}</span>`;
   }
   if (hacsName && hacsName.length > 0) {
-    const safeName = escapeHtml(hacsName);
-    return `<a class="repo-name" href="/r/${fullName}"><span class="repo-display">${safeName}</span> <span class="repo-slug muted small">(${safeFull})</span></a>`;
+    return html`<a class="repo-name" href="/r/${fullName}"><span class="repo-display">${hacsName}</span> <span class="repo-slug muted small">(${fullName})</span></a>`;
   }
-  return `<a class="repo-name" href="/r/${fullName}">${safeFull}</a>`;
+  return html`<a class="repo-name" href="/r/${fullName}">${fullName}</a>`;
 }
 
+/** Plain-text label — escaping happens at the html`` interpolation site. */
 export function kindLabel(kind: string): string {
-  return escapeHtml(KIND_LABEL[kind] ?? kind);
+  return KIND_LABEL[kind] ?? kind;
 }
 
 const KIND_TIP: Record<string, string> = {
@@ -113,10 +115,10 @@ const KIND_TIP: Record<string, string> = {
 /** Inline category badge — replaces the standalone Kind column in
  * listings so the row stays narrow on phones. Same hover/tap tooltip
  * pattern as repoTags(). */
-export function kindBadge(kind: string): string {
+export function kindBadge(kind: string): SafeHtml {
   const label = KIND_LABEL[kind] ?? kind;
   const tip = KIND_TIP[kind] ?? `HACS category: ${label}`;
-  return ` <span class="tag tag-kind" tabindex="0" data-tip="${escapeHtml(tip)}">${escapeHtml(label)}</span>`;
+  return html` <span class="tag tag-kind" tabindex="0" data-tip="${tip}">${label}</span>`;
 }
 
 /**
@@ -137,8 +139,8 @@ export function repoTags(row: {
   archived?: number;
   last_scraped_at?: string | null;
   last_commit_at?: string | null;
-}): string {
-  const tags: string[] = [];
+}): SafeHtml {
+  const tags: SafeHtml[] = [];
   // Pending tag comes first so it's the most prominent — it's the most
   // important piece of context ("the numbers next to this aren't real yet").
   // Only show when explicitly null (column was selected and the value
@@ -152,7 +154,7 @@ export function repoTags(row: {
   // reachable AND lets a tap on mobile trigger :focus, which the CSS uses
   // to surface the tooltip (`title=...` alone is invisible on touch).
   const tip = (cls: string, label: string, text: string) =>
-    `<span class="tag ${cls}" tabindex="0" data-tip="${escapeHtml(text)}">${label}</span>`;
+    html`<span class="tag ${cls}" tabindex="0" data-tip="${text}">${label}</span>`;
   if (state === 'pending' || (state === undefined && row.last_scraped_at === null)) {
     tags.push(
       tip(
@@ -232,7 +234,7 @@ export function repoTags(row: {
       );
     }
   }
-  return tags.length ? ` ${tags.join(' ')}` : '';
+  return tags.length ? html` ${joinHtml(tags, ' ')}` : html``;
 }
 
 export interface LeaderTableOptions {
@@ -240,13 +242,11 @@ export interface LeaderTableOptions {
    * of the always-rightmost Stars column). */
   secondaryLabel: string;
   /**
-   * Format the secondary cell. Returns trusted HTML — callers are
-   * responsible for escaping any untrusted strings they interpolate. This
-   * lets the caller compose richer cells (e.g. "12,345 (v3.5.0)" with the
-   * tag in muted text); the alternative — auto-escape — meant any HTML
-   * the caller wanted to inline got rendered as text.
+   * Format the secondary cell. Plain strings are escaped; build an html``
+   * fragment to compose richer cells (e.g. "12,345 (v3.5.0)" with the tag
+   * in muted text).
    */
-  formatSecondary: (r: RowForList) => string;
+  formatSecondary: (r: RowForList) => HtmlValue;
   /** Show the description column. Default true. Disable for compact tables. */
   showDescription?: boolean;
 }
@@ -271,26 +271,27 @@ export interface PaginationProps {
   baseUrl: string; // e.g. "/search?q=foo&sort=stars"
 }
 
-export function renderPagination(p: PaginationProps): string {
+export function renderPagination(p: PaginationProps): SafeHtml {
   const lastPage = Math.max(1, Math.ceil(p.total / p.pageSize));
   if (lastPage <= 1) {
-    return `<p class="muted small page-info">${p.total} result${p.total === 1 ? '' : 's'}.</p>`;
+    return html`<p class="muted small page-info">${p.total} result${p.total === 1 ? '' : 's'}.</p>`;
   }
   const sep = p.baseUrl.includes('?') ? '&' : '?';
   const link = (n: number, label: string, current: boolean) => {
-    if (current) return `<span class="page-current">${escapeHtml(label)}</span>`;
-    const href = `${escapeHtml(p.baseUrl)}${sep}page=${n}`;
-    return `<a class="page-link" href="${href}">${escapeHtml(label)}</a>`;
+    if (current) return html`<span class="page-current">${label}</span>`;
+    return html`<a class="page-link" href="${p.baseUrl}${sep}page=${n}">${label}</a>`;
   };
   const prev =
-    p.page > 1 ? link(p.page - 1, '← Prev', false) : `<span class="page-disabled">← Prev</span>`;
+    p.page > 1
+      ? link(p.page - 1, '← Prev', false)
+      : html`<span class="page-disabled">← Prev</span>`;
   const next =
     p.page < lastPage
       ? link(p.page + 1, 'Next →', false)
-      : `<span class="page-disabled">Next →</span>`;
+      : html`<span class="page-disabled">Next →</span>`;
   const start = (p.page - 1) * p.pageSize + 1;
   const end = Math.min(p.total, p.page * p.pageSize);
-  return `<nav class="pagination" role="navigation" aria-label="Pagination">
+  return html`<nav class="pagination" role="navigation" aria-label="Pagination">
     ${prev}
     <span class="page-info muted small">Showing ${start}–${end} of ${p.total} — page ${p.page} of ${lastPage}</span>
     ${next}
@@ -313,25 +314,23 @@ export function renderPagination(p: PaginationProps): string {
  * the new shape collapses those into one secondary slot. `showStarDelta`
  * is gone; the secondary is whatever the caller decides.
  */
-export function renderLeaderTable(rows: RowForList[], opts: LeaderTableOptions): string {
+export function renderLeaderTable(rows: RowForList[], opts: LeaderTableOptions): SafeHtml {
   const showDesc = opts.showDescription ?? true;
-  const head = `<tr>
+  const head = html`<tr>
     <th>Repo</th>
-    ${showDesc ? '<th class="desc-col">Description</th>' : ''}
-    <th class="num">${escapeHtml(opts.secondaryLabel)}</th>
+    ${showDesc ? html`<th class="desc-col">Description</th>` : ''}
+    <th class="num">${opts.secondaryLabel}</th>
     <th class="num">Stars</th>
   </tr>`;
   // Kind moved into the Repo cell as a tag (with hover/tap tooltip) so we
   // can shed a whole column — at phone widths the row was running off-screen.
-  const body = rows
-    .map(
-      (r) => `<tr>
+  const body = rows.map(
+    (r) => html`<tr>
         <td>${repoLink(r.full_name, r.hacs_name)}${kindBadge(r.kind)}${repoTags(r)}</td>
-        ${showDesc ? `<td class="desc-col muted small">${r.description ? escapeHtml(clip(r.description, 110)) : ''}</td>` : ''}
+        ${showDesc ? html`<td class="desc-col muted small">${r.description ? clip(r.description, 110) : ''}</td>` : ''}
         <td class="num">${opts.formatSecondary(r)}</td>
-        <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
+        <td class="num">${fmtInt(r.stars)}</td>
       </tr>`,
-    )
-    .join('');
-  return `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  );
+  return html`<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }

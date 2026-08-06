@@ -1,5 +1,7 @@
-export function renderAboutPage(): string {
-  return `
+import { type SafeHtml, html } from '../safe-html.js';
+
+export function renderAboutPage(): SafeHtml {
+  return html`
     <h2>What this is</h2>
     <p class="lead">
       hacs-stats is an unofficial dashboard of public usage signals for the

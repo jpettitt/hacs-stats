@@ -1,5 +1,6 @@
 import { fmtInt, renderLeaderTable, renderPagination } from '../components.js';
-import { escapeHtml, isSafeRepoFullName, safeHttpsGithubUrl } from '../sanitize.js';
+import { type SafeHtml, html, joinHtml } from '../safe-html.js';
+import { isSafeRepoFullName, safeHttpsGithubUrl } from '../sanitize.js';
 
 /** Row shape consumed by renderLeaderTable — mirrors what the search /
  * category pages pass in. The accepted-tab listing repurposes that
@@ -82,8 +83,8 @@ function urlToFullName(url: string): string {
   return m?.[1] ?? url;
 }
 
-export function renderAdminPage(props: AdminPageProps): string {
-  const flash = props.flash ? `<p class="lead">${escapeHtml(props.flash)}</p>` : '';
+export function renderAdminPage(props: AdminPageProps): SafeHtml {
+  const flash = props.flash ? html`<p class="lead">${props.flash}</p>` : html``;
   // q rides along on every link (tabs, sort headers, pagination) so a
   // search survives navigation until explicitly cleared.
   const qParam = props.q ? `&q=${encodeURIComponent(props.q)}` : '';
@@ -100,9 +101,9 @@ export function renderAdminPage(props: AdminPageProps): string {
   ) => {
     const active = props.status === key;
     const href = `/admin/queue?status=${key}&sort=${props.sort}&dir=${props.dir}${qParam}`;
-    return `<a href="${href}" class="${active ? 'tab tab-active' : 'tab'}">${label} <span class="muted small">(${count})</span></a>`;
+    return html`<a href="${href}" class="${active ? 'tab tab-active' : 'tab'}">${label} <span class="muted small">(${count})</span></a>`;
   };
-  const tabs = `
+  const tabs = html`
     <nav class="tabs">
       ${tab('pending', 'Pending', props.totals.pending)}
       ${tab('accepted', 'Accepted', props.totals.accepted)}
@@ -113,21 +114,21 @@ export function renderAdminPage(props: AdminPageProps): string {
   // friendly). Hidden inputs carry status/sort/dir; page deliberately
   // resets to 1 — a new search invalidates the old page number.
   // Reuses .filter-bar from the public search page for styling.
-  const searchForm = `
+  const searchForm = html`
     <form action="/admin/queue" method="get" class="filter-bar">
       <input type="hidden" name="status" value="${props.status}">
       <input type="hidden" name="sort" value="${props.sort}">
       <input type="hidden" name="dir" value="${props.dir}">
-      <input type="search" name="q" value="${escapeHtml(props.q)}" placeholder="Filter by repo, description, or notes" maxlength="100" autocomplete="off">
+      <input type="search" name="q" value="${props.q}" placeholder="Filter by repo, description, or notes" maxlength="100" autocomplete="off">
       <button type="submit">Search</button>
-      ${props.q ? `<a href="/admin/queue?status=${props.status}&sort=${props.sort}&dir=${props.dir}" class="muted small">Clear</a>` : ''}
+      ${props.q ? html`<a href="/admin/queue?status=${props.status}&sort=${props.sort}&dir=${props.dir}" class="muted small">Clear</a>` : ''}
     </form>`;
   if (props.pending.length === 0) {
     const emptyText = props.q
-      ? `No <strong>${escapeHtml(props.status)}</strong> rows match “${escapeHtml(props.q)}”.`
-      : `No <strong>${escapeHtml(props.status)}</strong> rows.
+      ? html`No <strong>${props.status}</strong> rows match “${props.q}”.`
+      : html`No <strong>${props.status}</strong> rows.
         Run <code>pnpm discover</code> on the server to look for new ones.`;
-    return `
+    return html`
       <h2>Discovery queue</h2>
       ${tabs}
       ${searchForm}
@@ -146,7 +147,7 @@ export function renderAdminPage(props: AdminPageProps): string {
   // search / category pages) instead of the queue-style table. Links go to
   // /r/<full_name> because these repos are in our catalogue.
   if (props.status === 'accepted' && props.listingRows && props.listingRows.length > 0) {
-    return `
+    return html`
       <h2>Discovery queue</h2>
       ${tabs}
       ${searchForm}
@@ -158,88 +159,81 @@ export function renderAdminPage(props: AdminPageProps): string {
       ${pagination}`;
   }
   const nowMs = Date.now();
-  const rows = props.pending
-    .map((it) => {
-      // it.url originates from /submit POST or the discover worker. /submit
-      // forces the `https://github.com/<owner>/<name>` shape, but the
-      // queue table has no DB-level constraint — anything could be here.
-      // Validate before using it as an href to block `javascript:` /
-      // `data:` schemes and path-traversal to other github.com paths.
-      // escapeHtml on its own only defeats attribute-quote breakout.
-      const safeGhUrl = safeHttpsGithubUrl(it.url);
-      const safeUrl = escapeHtml(it.url);
-      const fullName = urlToFullName(it.url);
-      const safeFullName = escapeHtml(fullName);
-      const internalLinkSafe = isSafeRepoFullName(fullName);
-      const safeNotes = it.notes ? escapeHtml(it.notes) : '';
-      const safeDesc = it.description ? escapeHtml(it.description) : '';
-      const starsCell = it.stars === null ? '—' : fmtInt(it.stars);
-      const pushedCell = fmtPushedAgo(it.pushed_at, nowMs);
-      // Only render the related block when there's actually something to
-      // show — the "first repo we've seen from this owner" empty state
-      // wasn't telling the admin anything they couldn't tell from the
-      // absence itself, and at 200-row queue density it became noise.
-      const related =
-        it.related && it.related.length > 0
-          ? `<div class="related muted small">
+  const rows = props.pending.map((it) => {
+    // it.url originates from /submit POST or the discover worker. /submit
+    // forces the `https://github.com/<owner>/<name>` shape, but the
+    // queue table has no DB-level constraint — anything could be here.
+    // Validate before using it as an href to block `javascript:` /
+    // `data:` schemes and path-traversal to other github.com paths.
+    // Interpolation escaping on its own only defeats attribute-quote
+    // breakout.
+    const safeGhUrl = safeHttpsGithubUrl(it.url);
+    const fullName = urlToFullName(it.url);
+    const internalLinkSafe = isSafeRepoFullName(fullName);
+    const starsCell = it.stars === null ? '—' : fmtInt(it.stars);
+    const pushedCell = fmtPushedAgo(it.pushed_at, nowMs);
+    // Only render the related block when there's actually something to
+    // show — the "first repo we've seen from this owner" empty state
+    // wasn't telling the admin anything they couldn't tell from the
+    // absence itself, and at 200-row queue density it became noise.
+    const related =
+      it.related && it.related.length > 0
+        ? html`<div class="related muted small">
               <strong>Related projects from same owner</strong> (${it.related.length}):<br>
-              ${it.related
-                .slice(0, 8)
-                .map((r) => {
+              ${joinHtml(
+                it.related.slice(0, 8).map((r) => {
                   // Guard the internal /r/ path with the same shape check
                   // we apply on the route handler — defence in depth, the
                   // catalogue is high-trust but the assertion is cheap.
-                  const label = escapeHtml(
-                    r.hacs_name && r.hacs_name.length > 0 ? r.hacs_name : r.full_name,
-                  );
+                  const label = r.hacs_name && r.hacs_name.length > 0 ? r.hacs_name : r.full_name;
                   return isSafeRepoFullName(r.full_name)
-                    ? `<a href="/r/${escapeHtml(r.full_name)}">${label}</a>`
-                    : `<span>${label}</span>`;
-                })
-                .join(', ')}${it.related.length > 8 ? `, +${it.related.length - 8} more` : ''}
+                    ? html`<a href="/r/${r.full_name}">${label}</a>`
+                    : html`<span>${label}</span>`;
+                }),
+                ', ',
+              )}${it.related.length > 8 ? html`, +${it.related.length - 8} more` : ''}
             </div>`
-          : '';
-      // Accept/Reject buttons only make sense on pending rows — accepted /
-      // rejected rows are already decided; surfacing the buttons would let
-      // the admin "re-accept" a row that no longer corresponds to a queue
-      // action (decideQueueItem would no-op or churn).
-      const actions =
-        props.status === 'pending'
-          ? `<form action="/admin/queue/decide" method="post" style="display:inline">
-               <input type="hidden" name="url" value="${safeUrl}">
+        : html``;
+    // Accept/Reject buttons only make sense on pending rows — accepted /
+    // rejected rows are already decided; surfacing the buttons would let
+    // the admin "re-accept" a row that no longer corresponds to a queue
+    // action (decideQueueItem would no-op or churn).
+    const actions =
+      props.status === 'pending'
+        ? html`<form action="/admin/queue/decide" method="post" style="display:inline">
+               <input type="hidden" name="url" value="${it.url}">
                <input type="hidden" name="decision" value="accept">
                <button type="submit">Accept</button>
              </form>
              <form action="/admin/queue/decide" method="post" style="display:inline">
-               <input type="hidden" name="url" value="${safeUrl}">
+               <input type="hidden" name="url" value="${it.url}">
                <input type="hidden" name="decision" value="reject">
                <button type="submit">Reject</button>
              </form>`
-          : `<span class="muted small">${escapeHtml(it.status)}</span>`;
-      // For accepted rows the repo is in our catalogue (auto-approve inserted
-      // it into `repos`), so we link to the internal detail page — same as
-      // any listing page. Pending/rejected rows aren't in `repos` (or
-      // shouldn't be navigated to internally), so they keep the GitHub link.
-      const repoLink =
-        props.status === 'accepted' && internalLinkSafe
-          ? `<a href="/r/${safeFullName}">${safeFullName}</a>`
-          : safeGhUrl
-            ? `<a href="${safeGhUrl}" target="_blank" rel="noopener noreferrer">${safeFullName}</a>`
-            : `<span class="muted">${safeFullName}</span>`;
-      return `<tr>
+        : html`<span class="muted small">${it.status}</span>`;
+    // For accepted rows the repo is in our catalogue (auto-approve inserted
+    // it into `repos`), so we link to the internal detail page — same as
+    // any listing page. Pending/rejected rows aren't in `repos` (or
+    // shouldn't be navigated to internally), so they keep the GitHub link.
+    const repoLink =
+      props.status === 'accepted' && internalLinkSafe
+        ? html`<a href="/r/${fullName}">${fullName}</a>`
+        : safeGhUrl
+          ? html`<a href="${safeGhUrl}" target="_blank" rel="noopener noreferrer">${fullName}</a>`
+          : html`<span class="muted">${fullName}</span>`;
+    return html`<tr>
         <td>
           ${repoLink}
-          ${safeDesc ? `<div class="muted small">${safeDesc}</div>` : ''}
+          ${it.description ? html`<div class="muted small">${it.description}</div>` : ''}
           ${related}
         </td>
         <td class="num">${starsCell}</td>
-        <td class="num small">${escapeHtml(pushedCell)}</td>
-        <td class="num small">${escapeHtml(it.discovered_at.slice(0, 10))}</td>
-        <td class="muted small">${safeNotes}</td>
+        <td class="num small">${pushedCell}</td>
+        <td class="num small">${it.discovered_at.slice(0, 10)}</td>
+        <td class="muted small">${it.notes ?? ''}</td>
         <td>${actions}</td>
       </tr>`;
-    })
-    .join('');
+  });
   // Sortable column headers — clicking toggles direction when re-clicked
   // on the active sort, otherwise picks the column's natural default
   // (stars/desc, pushed/desc — both "best first").
@@ -255,9 +249,9 @@ export function renderAdminPage(props: AdminPageProps): string {
     // toggled mid-stream is more confusing than starting over.
     const href = `/admin/queue?status=${props.status}&sort=${col}&dir=${nextDir}&page=1${qParam}`;
     const cls = `${align}${isActive ? ' sort-active' : ''}`.trim();
-    return `<th class="${cls}"><a href="${href}">${escapeHtml(label)}${arrow}</a></th>`;
+    return html`<th class="${cls}"><a href="${href}">${label}${arrow}</a></th>`;
   };
-  return `
+  return html`
     <h2>Discovery queue</h2>
     ${tabs}
     ${searchForm}

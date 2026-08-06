@@ -8,7 +8,7 @@ import {
   repoLink,
   repoTags,
 } from '../components.js';
-import { escapeHtml } from '../sanitize.js';
+import { type SafeHtml, html } from '../safe-html.js';
 
 export type LeaderRow = RowForList;
 
@@ -23,41 +23,41 @@ export interface HomeProps {
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return '—';
-  return escapeHtml(iso.slice(0, 10));
+  return iso.slice(0, 10);
 }
 
-function descCell(d: string | null | undefined, max = 90): string {
-  if (!d) return '<td class="desc-col muted small"></td>';
+function descCell(d: string | null | undefined, max = 90): SafeHtml {
+  if (!d) return html`<td class="desc-col muted small"></td>`;
   const trimmed = d.length > max ? `${d.slice(0, max - 1).trimEnd()}…` : d;
-  return `<td class="desc-col muted small">${escapeHtml(trimmed)}</td>`;
+  return html`<td class="desc-col muted small">${trimmed}</td>`;
 }
 
 /** "More" link to the full filtered list on /search. Each home section
  * shows the top N — the link spills the user into the same listing the
  * category cards / search dropdown lead to, so the UX is one surface. */
-function moreLink(sort: string): string {
-  return `<a class="more-link" href="/search?sort=${sort}">See all →</a>`;
+function moreLink(sort: string): SafeHtml {
+  return html`<a class="more-link" href="/search?sort=${sort}">See all →</a>`;
 }
 
-export function renderHome(props: HomeProps): string {
+export function renderHome(props: HomeProps): SafeHtml {
   const { repoCount, topByStars, topByDownloads, trendingByStars, newArrivals, recentlyUpdated } =
     props;
 
   const trendingNote =
     trendingByStars.length === 0
-      ? '<p class="muted small">No 30-day star deltas yet. After a few daily scrapes, repos that picked up new stars will appear here.</p>'
-      : '';
+      ? html`<p class="muted small">No 30-day star deltas yet. After a few daily scrapes, repos that picked up new stars will appear here.</p>`
+      : html``;
 
-  return `
+  return html`
     <p class="lead">Public download &amp; star stats for the Home Assistant Community Store.</p>
 
-    <div class="stat">Tracking <strong>${escapeHtml(fmtInt(repoCount))}</strong> repositories across the HACS catalogue.</div>
+    <div class="stat">Tracking <strong>${fmtInt(repoCount)}</strong> repositories across the HACS catalogue.</div>
 
     <section>
       <h2>Top by stars ${moreLink('stars')}</h2>
       ${renderLeaderTable(topByStars, {
         secondaryLabel: 'Stars Δ 30d',
-        formatSecondary: (r) => escapeHtml(fmtDelta(r.star_delta_30d)),
+        formatSecondary: (r) => fmtDelta(r.star_delta_30d),
       })}
     </section>
 
@@ -74,9 +74,9 @@ export function renderHome(props: HomeProps): string {
         // right-aligned across rows (variable-length tags like "v0.13.0"
         // vs "v5" otherwise push numbers to different columns).
         formatSecondary: (r) =>
-          `${escapeHtml(fmtDownloads(r.latest_release_downloads ?? 0))}${
+          html`${fmtDownloads(r.latest_release_downloads ?? 0)}${
             r.latest_release_tag
-              ? `<br><span class="muted small">${escapeHtml(r.latest_release_tag)}</span>`
+              ? html`<br><span class="muted small">${r.latest_release_tag}</span>`
               : ''
           }`,
       })}
@@ -87,7 +87,7 @@ export function renderHome(props: HomeProps): string {
       ${trendingNote}
       ${renderLeaderTable(trendingByStars, {
         secondaryLabel: 'Stars Δ 30d',
-        formatSecondary: (r) => escapeHtml(fmtDelta(r.star_delta_30d)),
+        formatSecondary: (r) => fmtDelta(r.star_delta_30d),
       })}
     </section>
 
@@ -96,16 +96,14 @@ export function renderHome(props: HomeProps): string {
       <p class="lead small">Most-recently-published release (including prereleases).</p>
       <table>
         <thead><tr><th>Repo</th><th class="desc-col">Description</th><th class="num">Last release</th><th class="num">Stars</th></tr></thead>
-        <tbody>${recentlyUpdated
-          .map(
-            (r) => `<tr>
+        <tbody>${recentlyUpdated.map(
+          (r) => html`<tr>
               <td>${repoLink(r.full_name, r.hacs_name)}${kindBadge(r.kind)}${repoTags(r)}</td>
               ${descCell(r.description)}
               <td class="num small">${fmtDate(r.latest_release_at ?? null)}</td>
-              <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
+              <td class="num">${fmtInt(r.stars)}</td>
             </tr>`,
-          )
-          .join('')}</tbody>
+        )}</tbody>
       </table>
     </section>
 
@@ -114,16 +112,14 @@ export function renderHome(props: HomeProps): string {
       <p class="lead small">Recently added to the catalogue — from the official HACS default lists, discovered by our code-search of <code>hacs.json</code> files, or submitted via the public form. The badge on each row shows which.</p>
       <table>
         <thead><tr><th>Repo</th><th class="desc-col">Description</th><th class="num">First seen</th><th class="num">Stars</th></tr></thead>
-        <tbody>${newArrivals
-          .map(
-            (r) => `<tr>
+        <tbody>${newArrivals.map(
+          (r) => html`<tr>
               <td>${repoLink(r.full_name, r.hacs_name)}${kindBadge(r.kind)}${repoTags(r)}</td>
               ${descCell(r.description)}
               <td class="num small">${fmtDate(r.first_seen_at)}</td>
-              <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
+              <td class="num">${fmtInt(r.stars)}</td>
             </tr>`,
-          )
-          .join('')}</tbody>
+        )}</tbody>
       </table>
     </section>
   `;

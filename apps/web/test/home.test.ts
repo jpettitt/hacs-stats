@@ -39,7 +39,7 @@ describe('renderHome — XSS resistance', () => {
     trendingByStars: MALICIOUS_ROWS,
     newArrivals: MALICIOUS_ROWS,
     recentlyUpdated: MALICIOUS_ROWS,
-  });
+  }).toString();
 
   it('never emits a raw <script> from malicious data', () => {
     // The literal payload string is the only place "<script>" could appear;
@@ -78,7 +78,7 @@ describe('renderHome — XSS resistance', () => {
       trendingByStars: [],
       newArrivals: [],
       recentlyUpdated: [],
-    });
+    }).toString();
     expect(safeHtml).toContain('href="/r/jpettitt/weather-radar-card"');
   });
 
@@ -100,7 +100,7 @@ describe('renderHome — XSS resistance', () => {
       trendingByStars: [],
       newArrivals: [],
       recentlyUpdated: [],
-    });
+    }).toString();
     expect(html).toContain('Mushroom');
     expect(html).toContain('(piitaya/lovelace-mushroom)');
     expect(html).toContain('class="repo-display"');
@@ -124,7 +124,7 @@ describe('renderHome — XSS resistance', () => {
       trendingByStars: [],
       newArrivals: [],
       recentlyUpdated: [],
-    });
+    }).toString();
     expect(html).not.toContain('<script>alert(1)');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   });

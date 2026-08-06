@@ -57,7 +57,16 @@ canonical row).
 
 For crawlers, `/sitemap.xml` is generated from the DB on request (static
 pages + every repo and owner page, with per-repo `lastmod` from the last
-successful scrape) and advertised via `/robots.txt`.
+successful scrape) and advertised via `/robots.txt`. Pages carry schema.org
+JSON-LD (WebSite on home; SoftwareApplication + BreadcrumbList on repo
+pages) plus canonical links and meta descriptions.
+
+All HTML is built with a safe-by-construction template tag
+(`apps/web/src/safe-html.ts`, the goog.html.SafeHtml pattern): every
+interpolated value is escaped unless it's already a `SafeHtml` fragment,
+and `renderLayout` only accepts `SafeHtml` — the compiler rejects any
+render path that hasn't gone through the escaper or an explicit,
+greppable `raw()` claim.
 
 ## Stack
 

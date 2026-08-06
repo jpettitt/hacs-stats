@@ -7,7 +7,7 @@ import {
   renderLeaderTable,
   renderPagination,
 } from '../components.js';
-import { escapeHtml } from '../sanitize.js';
+import { type HtmlValue, type SafeHtml, html } from '../safe-html.js';
 
 /** Available sort keys for the search UI — same set the DB layer accepts. */
 export const SORT_OPTIONS = [
@@ -35,16 +35,15 @@ export interface SearchPageProps {
 }
 
 function dropdown(
+  id: string,
   name: string,
   selected: string | undefined,
   options: Array<{ value: string; label: string }>,
-): string {
-  return `<select name="${name}">${options
-    .map(
-      (o) =>
-        `<option value="${escapeHtml(o.value)}"${o.value === selected ? ' selected' : ''}>${escapeHtml(o.label)}</option>`,
-    )
-    .join('')}</select>`;
+): SafeHtml {
+  return html`<select id="${id}" name="${name}">${options.map(
+    (o) =>
+      html`<option value="${o.value}"${o.value === selected ? html` selected` : ''}>${o.label}</option>`,
+  )}</select>`;
 }
 
 /**
@@ -57,24 +56,24 @@ function dropdown(
  *   - sort by recent → secondary is Last commit.
  *   - sort by new → secondary is First seen.
  */
-function secondaryValueForSort(r: RowForList, sort: SortValue): string {
+function secondaryValueForSort(r: RowForList, sort: SortValue): HtmlValue {
   switch (sort) {
     case 'downloads':
       // Version on its own line so digits align in the column (matches
       // the home "Top by downloads" treatment).
-      return `${escapeHtml(fmtDownloads(r.latest_release_downloads ?? 0))}${
+      return html`${fmtDownloads(r.latest_release_downloads ?? 0)}${
         r.latest_release_tag
-          ? `<br><span class="muted small">${escapeHtml(r.latest_release_tag)}</span>`
+          ? html`<br><span class="muted small">${r.latest_release_tag}</span>`
           : ''
       }`;
     case 'recent':
-      return r.latest_release_at ? escapeHtml(r.latest_release_at.slice(0, 10)) : '—';
+      return r.latest_release_at ? r.latest_release_at.slice(0, 10) : '—';
     case 'new':
-      return escapeHtml((r.first_seen_at ?? '').slice(0, 10));
+      return (r.first_seen_at ?? '').slice(0, 10);
     default:
       // name / stars / trending all use Stars Δ 30d as the secondary —
       // signed delta so + / - is meaningful.
-      return escapeHtml(fmtDelta(r.star_delta_30d));
+      return fmtDelta(r.star_delta_30d);
   }
 }
 
@@ -96,39 +95,38 @@ function labelForSort(sort: SortValue): string {
   return SORT_OPTIONS.find((o) => o.value === sort)?.label ?? 'Stars';
 }
 
-export function renderSearchPage(props: SearchPageProps): string {
-  const q = escapeHtml(props.query);
+export function renderSearchPage(props: SearchPageProps): SafeHtml {
   const kindOptions = [
     { value: '', label: 'All categories' },
-    ...props.allKinds.map((k) => ({ value: k, label: kindLabel(k).replace(/<\/?[^>]+>/g, '') })),
+    ...props.allKinds.map((k) => ({ value: k, label: kindLabel(k) })),
   ];
 
   // The filter bar is its own <form> so changing sort/kind submits without
   // making the user re-type the query. action="/search" keeps the URL
   // bookmarkable.
-  const filterBar = `
+  const filterBar = html`
     <form class="filter-bar" action="/search" method="get" role="search">
       <label class="visually-hidden" for="q">Query</label>
-      <input id="q" type="search" name="q" value="${q}" placeholder="Search repos…" autocomplete="off">
+      <input id="q" type="search" name="q" value="${props.query}" placeholder="Search repos…" autocomplete="off">
       <label class="visually-hidden" for="kind">Category</label>
-      ${dropdown('kind', props.kind ?? '', kindOptions).replace('<select', '<select id="kind"')}
+      ${dropdown('kind', 'kind', props.kind ?? '', kindOptions)}
       <label class="visually-hidden" for="sort">Sort by</label>
-      ${dropdown('sort', props.sort, [...SORT_OPTIONS]).replace('<select', '<select id="sort"')}
+      ${dropdown('sort', 'sort', props.sort, [...SORT_OPTIONS])}
       <button type="submit">Apply</button>
     </form>`;
 
   if (props.hits.length === 0) {
     const msg =
       props.query.length > 0
-        ? `No repos match <code>${q}</code>${props.kind ? ` in <code>${escapeHtml(props.kind)}</code>` : ''}.`
-        : 'Pick a category or type a query above to see results.';
-    return `<h2>Search</h2>${filterBar}<p class="muted" style="margin-top:1rem;">${msg}</p>`;
+        ? html`No repos match <code>${props.query}</code>${props.kind ? html` in <code>${props.kind}</code>` : ''}.`
+        : html`Pick a category or type a query above to see results.`;
+    return html`<h2>Search</h2>${filterBar}<p class="muted" style="margin-top:1rem;">${msg}</p>`;
   }
 
   const summaryHeader =
     props.query.length > 0
-      ? `${props.total} result${props.total === 1 ? '' : 's'} for <code>${q}</code>${props.kind ? ` in <code>${escapeHtml(props.kind)}</code>` : ''}`
-      : `${props.total} repos${props.kind ? ` in <code>${escapeHtml(props.kind)}</code>` : ''}, sorted by ${escapeHtml(labelForSort(props.sort).toLowerCase())}`;
+      ? html`${props.total} result${props.total === 1 ? '' : 's'} for <code>${props.query}</code>${props.kind ? html` in <code>${props.kind}</code>` : ''}`
+      : html`${props.total} repos${props.kind ? html` in <code>${props.kind}</code>` : ''}, sorted by ${labelForSort(props.sort).toLowerCase()}`;
 
   const table = renderLeaderTable(props.hits, {
     secondaryLabel: secondaryLabelForSort(props.sort),
@@ -150,7 +148,7 @@ export function renderSearchPage(props: SearchPageProps): string {
     baseUrl,
   });
 
-  return `
+  return html`
     <h2>Search</h2>
     ${filterBar}
     <p class="muted small" style="margin-top:1rem;">${summaryHeader}</p>

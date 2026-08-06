@@ -1,5 +1,5 @@
 import { type RowForList, fmtInt, kindLabel, repoLink, repoTags } from '../components.js';
-import { escapeHtml } from '../sanitize.js';
+import { type SafeHtml, html } from '../safe-html.js';
 
 interface LifecycleRow extends RowForList {
   first_failure_at?: string | null;
@@ -8,7 +8,7 @@ interface LifecycleRow extends RowForList {
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return '—';
-  return escapeHtml(iso.slice(0, 10));
+  return iso.slice(0, 10);
 }
 
 export interface PendingPageProps {
@@ -21,25 +21,23 @@ export interface PendingPageProps {
  * admin accepts so the user can see what's in the queue for the next run.
  * The submitter can also bookmark this to see when their submission lands.
  */
-export function renderPendingPage(props: PendingPageProps): string {
+export function renderPendingPage(props: PendingPageProps): SafeHtml {
   if (props.rows.length === 0) {
-    return `
+    return html`
       <h2>Pending repos</h2>
       <p class="muted">Nothing pending. Accepted submissions and discovered
         repos sit here until the daily scrape fills in their data —
         usually a few hours.</p>
     `;
   }
-  const rows = props.rows
-    .map(
-      (r) => `<tr>
+  const rows = props.rows.map(
+    (r) => html`<tr>
         <td>${repoLink(r.full_name, r.hacs_name)}${repoTags(r)}</td>
         <td class="kind">${kindLabel(r.kind)}</td>
         <td class="num small">${fmtDate(r.first_seen_at)}</td>
       </tr>`,
-    )
-    .join('');
-  return `
+  );
+  return html`
     <h2>Pending repos <span class="muted small">(${props.rows.length})</span></h2>
     <p class="lead">
       Accepted into the catalogue but not yet scraped. Stars / downloads /
@@ -61,25 +59,23 @@ export interface RemovedPageProps {
  * 30+ days. Historical data is kept (so reviewing a dead plugin's old
  * download numbers still works); they just don't show in default listings.
  */
-export function renderRemovedPage(props: RemovedPageProps): string {
+export function renderRemovedPage(props: RemovedPageProps): SafeHtml {
   if (props.rows.length === 0) {
-    return `
+    return html`
       <h2>Removed repos</h2>
       <p class="muted">Nothing removed yet. Repos land here after 30 days of
         consecutive scrape failures (404 / private / deleted).</p>
     `;
   }
-  const rows = props.rows
-    .map(
-      (r) => `<tr>
+  const rows = props.rows.map(
+    (r) => html`<tr>
         <td>${repoLink(r.full_name, r.hacs_name)}${repoTags(r)}</td>
         <td class="kind">${kindLabel(r.kind)}</td>
-        <td class="num">${escapeHtml(fmtInt(r.stars))}</td>
+        <td class="num">${fmtInt(r.stars)}</td>
         <td class="num small">${fmtDate(r.first_failure_at)}</td>
       </tr>`,
-    )
-    .join('');
-  return `
+  );
+  return html`
     <h2>Removed repos <span class="muted small">(${props.rows.length})</span></h2>
     <p class="lead">
       Unreachable for 30+ days. Last-known data preserved; nothing here is

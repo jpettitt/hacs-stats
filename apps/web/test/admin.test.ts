@@ -23,21 +23,31 @@ const ITEM = {
 
 describe('renderAdminPage — queue search', () => {
   it('renders the search form and echoes the query safely', () => {
-    const html = renderAdminPage({ ...BASE, pending: [ITEM], q: '"><script>x</script>' });
+    const html = renderAdminPage({
+      ...BASE,
+      pending: [ITEM],
+      q: '"><script>x</script>',
+    }).toString();
     expect(html).toContain('name="q"');
     expect(html).not.toContain('<script>x</script>');
   });
 
   it('carries q through tab, sort, and clear links', () => {
-    const html = renderAdminPage({ ...BASE, pending: [ITEM], q: 'solar card' });
-    // Tabs and sort headers keep the filter; clear link drops it.
-    expect(html).toContain('/admin/queue?status=accepted&sort=discovered&dir=desc&q=solar%20card');
-    expect(html).toContain('/admin/queue?status=pending&sort=stars&dir=desc&page=1&q=solar%20card');
+    const html = renderAdminPage({ ...BASE, pending: [ITEM], q: 'solar card' }).toString();
+    // Tabs and sort headers keep the filter; clear link drops it. The &
+    // separators are entity-escaped in attribute context (correct HTML;
+    // browsers decode them back to & before navigating).
+    expect(html).toContain(
+      '/admin/queue?status=accepted&amp;sort=discovered&amp;dir=desc&amp;q=solar%20card',
+    );
+    expect(html).toContain(
+      '/admin/queue?status=pending&amp;sort=stars&amp;dir=desc&amp;page=1&amp;q=solar%20card',
+    );
     expect(html).toContain('>Clear</a>');
   });
 
   it('shows a search-aware empty state', () => {
-    const html = renderAdminPage({ ...BASE, pending: [], q: 'nothing-matches' });
+    const html = renderAdminPage({ ...BASE, pending: [], q: 'nothing-matches' }).toString();
     expect(html).toContain('match');
     expect(html).toContain('nothing-matches');
     // The "run pnpm discover" hint is for a genuinely empty queue only.
@@ -45,8 +55,9 @@ describe('renderAdminPage — queue search', () => {
   });
 
   it('omits q from links when not searching', () => {
-    const html = renderAdminPage({ ...BASE, pending: [ITEM], q: '' });
+    const html = renderAdminPage({ ...BASE, pending: [ITEM], q: '' }).toString();
     expect(html).not.toContain('&q=');
+    expect(html).not.toContain('&amp;q=');
     expect(html).not.toContain('>Clear</a>');
   });
 });

@@ -1,3 +1,5 @@
+import { type SafeHtml, html } from '../safe-html.js';
+
 /**
  * /privacy — plain-language privacy disclosure. Surfaces what we collect,
  * what cookies are set (Google Analytics 4), and who the
@@ -7,8 +9,8 @@
  * year at most, and putting it in version control keeps the audit trail
  * obvious ("when did we add Google Analytics?" = `git log -p`).
  */
-export function renderPrivacyPage(): string {
-  return `
+export function renderPrivacyPage(): SafeHtml {
+  return html`
     <h2>Privacy</h2>
 
     <p class="lead">hacs-stats is a public dashboard of GitHub repository

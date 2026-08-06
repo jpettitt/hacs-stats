@@ -8,7 +8,11 @@
  * report.
  */
 
-/** HTML text/attribute context. Covers the OWASP recommended set. */
+/** HTML text/attribute context. Covers the OWASP recommended set.
+ *
+ * Don't call this from render code — build markup with the html`` tag
+ * (safe-html.ts), which routes every interpolation through here
+ * automatically. Direct calls inside html`` templates DOUBLE-escape. */
 export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
