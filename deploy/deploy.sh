@@ -27,6 +27,10 @@ HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3000/health}"
 
 step() { printf '\n=== %s ===\n' "$1"; }
 
+# EVERY git invocation must go through this, not just the pull: the repo
+# is owned by $SERVICE_USER and root-run git refuses with "detected
+# dubious ownership" (CVE-2022-24765 protection) unless safe.directory
+# is configured — which we'd rather not require on the box.
 as_svc() { sudo -u "$SERVICE_USER" "$@"; }
 
 main() {
@@ -48,22 +52,22 @@ main() {
   # DEPLOY_OLD_REV survives the self-update re-exec (by then HEAD has
   # already moved, so re-reading it would break the changelog + rollback rev).
   local old_rev
-  old_rev="${DEPLOY_OLD_REV:-$(git rev-parse HEAD)}"
+  old_rev="${DEPLOY_OLD_REV:-$(as_svc git rev-parse HEAD)}"
 
   if [[ $do_pull -eq 1 ]]; then
-    step "Pulling latest ($(git rev-parse --abbrev-ref HEAD))"
+    step "Pulling latest ($(as_svc git rev-parse --abbrev-ref HEAD))"
     local self_before
-    self_before="$(git hash-object deploy/deploy.sh)"
+    self_before="$(as_svc git hash-object deploy/deploy.sh)"
     # ff-only: a diverged tree (local hotfix never pushed) should fail
     # loudly for a human decision, not auto-merge on a production box.
     as_svc git pull --ff-only
 
-    if [[ "$(git hash-object deploy/deploy.sh)" != "$self_before" && -z "${DEPLOY_REEXEC:-}" ]]; then
+    if [[ "$(as_svc git hash-object deploy/deploy.sh)" != "$self_before" && -z "${DEPLOY_REEXEC:-}" ]]; then
       echo "deploy.sh changed upstream — re-executing the new version"
       DEPLOY_REEXEC=1 DEPLOY_OLD_REV="$old_rev" exec bash "$0" --no-pull "$@"
     fi
 
-    if [[ "$(git rev-parse HEAD)" == "$old_rev" ]]; then
+    if [[ "$(as_svc git rev-parse HEAD)" == "$old_rev" ]]; then
       # Still probe health so a rerun after a failed deploy can't look
       # like success while the service is down.
       if curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null 2>&1; then
@@ -77,7 +81,7 @@ main() {
   fi
 
   step "Changes since ${old_rev:0:9}"
-  git log --oneline "${old_rev}..HEAD" || true
+  as_svc git log --oneline "${old_rev}..HEAD" || true
 
   step "Installing dependencies"
   as_svc pnpm install --frozen-lockfile --dir "$REPO_ROOT"
@@ -122,7 +126,7 @@ main() {
   for i in {1..10}; do
     if curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null 2>&1; then
       echo "healthy: $HEALTH_URL"
-      step "Deployed $(git rev-parse --short HEAD)"
+      step "Deployed $(as_svc git rev-parse --short HEAD)"
       exit 0
     fi
     sleep 1
