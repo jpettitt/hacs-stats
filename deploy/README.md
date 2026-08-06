@@ -191,15 +191,30 @@ issues its own cert on first start and rotates it before expiry.
 ## Updates
 
 ```sh
-cd /opt/hacs-stats
-sudo -u hacs-stats git pull
-sudo -u hacs-stats pnpm install --frozen-lockfile
-sudo -u hacs-stats DATABASE_PATH=/var/lib/hacs-stats/hacs-stats.db pnpm migrate
-sudo systemctl restart hacs-stats-web.service
+sudo bash /opt/hacs-stats/deploy/deploy.sh
+# or from your laptop:
+ssh <vps> 'sudo bash /opt/hacs-stats/deploy/deploy.sh'
 ```
 
-The scrape job picks up the new code on its next timer fire — no restart
-needed; it's one-shot.
+`deploy.sh` runs: git pull (ff-only — a diverged tree aborts for a human
+decision) → `pnpm install --frozen-lockfile` → migrations → re-installs any
+changed systemd units (+ `daemon-reload`) → restarts the web service → waits
+for `/health` to respond, printing recent logs and rollback instructions if
+it doesn't. A no-op deploy (nothing new upstream) exits early without
+restarting, but still reports whether the service is healthy. If the pull
+updates `deploy.sh` itself, the new version is re-exec'd so the deploy runs
+with current logic.
+
+Flags: `--test` runs the workspace test suite after install (aborts the
+deploy on failure); `--no-pull` deploys the tree as-is.
+
+If `deploy/Caddyfile` has drifted from the installed
+`/etc/caddy/Caddyfile.hacs-stats` the script warns but never overwrites —
+the installed copy may carry deliberate local edits (same policy as
+`install.sh`). Review with the printed `diff` command and apply manually.
+
+The scrape / discover / sweep jobs pick up new code on their next timer
+fire — no restart needed; they're one-shot.
 
 ## Background jobs
 
