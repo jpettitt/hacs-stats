@@ -40,7 +40,8 @@ Two sources:
    by URL. Discovered via a weekly GitHub code-search for `hacs.json` (the
    manifest file every HACS repo must include), plus user submissions.
 
-Discovered candidates flow through a queue at `/admin/queue`. High-confidence
+Discovered candidates flow through a queue at `/admin/queue` (searchable by
+repo URL, description, or notes across all status tabs). High-confidence
 candidates auto-approve: ≥50 stars *and* pushed within the last 6 months go
 straight into the catalogue. Owners that already have a `default`-listed repo
 get a lower 5-star bar (trusted-owner discount). Everything else queues for
@@ -53,6 +54,10 @@ yet) → `active` (default) → `offline` (failing GraphQL) → `removed` (30+ d
 offline). GitHub repo renames are picked up via the canonical `nameWithOwner`
 field and the row is renamed in place (or deduped against an existing
 canonical row).
+
+For crawlers, `/sitemap.xml` is generated from the DB on request (static
+pages + every repo and owner page, with per-repo `lastmod` from the last
+successful scrape) and advertised via `/robots.txt`.
 
 ## Stack
 

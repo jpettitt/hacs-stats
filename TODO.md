@@ -142,6 +142,8 @@ home page renders 5 leaderboard sections in <100ms.
 - [x] Admin queue UI: tabs (pending / accepted / rejected / errored),
       description + stars + last-push columns, sortable headers, accepted
       tab uses the same row format as other listing pages
+- [x] Queue search: filter by URL / description / notes; tab counts follow
+      the filter so "where did repo X end up?" is one search away
 - [ ] Weekly systemd timer for `pnpm discover:bands`
 - [ ] Harden `discover-bands.ts` against transient ETIMEDOUTs (retry the
       failing band rather than aborting the whole sweep)
@@ -161,6 +163,8 @@ high-confidence tail; admin can promote remaining items to `repos`.
 
 ## Phase 7 — Polish & ops
 
+- [x] SEO: `/sitemap.xml` generated from the DB (repos + owners + static
+      pages, per-repo lastmod) and `/robots.txt` advertising it
 - [ ] Per-repo "embed badge" (SVG download/star counts)
 - [ ] "For authors" page with opt-out instructions
 - [ ] Outreach to HACS team for endorsement / clarification of relationship

@@ -101,6 +101,38 @@ export function listAllRepoIdents(db: Db, limit?: number): AllRepoIdent[] {
     .all(limit);
 }
 
+export interface SitemapRepoRow {
+  full_name: string;
+  last_scraped_at: string | null;
+}
+
+/** Every repo detail page worth indexing: all non-suppressed rows, any
+ * lifecycle state — pending/removed pages render 200 and are linked from
+ * /pending and /removed, so they belong in the sitemap too. */
+export function listSitemapRepos(db: Db): SitemapRepoRow[] {
+  return db.raw
+    .prepare<[], SitemapRepoRow>(
+      'SELECT full_name, last_scraped_at FROM repos WHERE suppressed = 0 ORDER BY full_name',
+    )
+    .all();
+}
+
+export interface SitemapOwnerRow {
+  owner: string;
+  last_scraped_at: string | null;
+}
+
+/** One row per distinct owner with a public /owner page. lastmod is the
+ * freshest scrape across the owner's repos. */
+export function listSitemapOwners(db: Db): SitemapOwnerRow[] {
+  return db.raw
+    .prepare<[], SitemapOwnerRow>(
+      `SELECT owner, MAX(last_scraped_at) AS last_scraped_at
+       FROM repos WHERE suppressed = 0 GROUP BY owner ORDER BY owner`,
+    )
+    .all();
+}
+
 export function getReleasesEtag(db: Db, repoId: number): string | null {
   const row = db.raw
     .prepare<[number], { releases_etag: string | null }>(

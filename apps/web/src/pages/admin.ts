@@ -65,6 +65,10 @@ export interface AdminPageProps {
   dir: 'asc' | 'desc';
   page: number;
   pageSize: number;
+  /** Search filter over url/description/notes. Empty string = no filter.
+   * Applied to the tab counts too, so the tabs show where a searched-for
+   * repo ended up. */
+  q: string;
   /** Flash message from the prior action (?msg=accepted|rejected|error). */
   flash?: string;
   /** When provided (accepted tab only), the page renders these via the
@@ -80,6 +84,9 @@ function urlToFullName(url: string): string {
 
 export function renderAdminPage(props: AdminPageProps): string {
   const flash = props.flash ? `<p class="lead">${escapeHtml(props.flash)}</p>` : '';
+  // q rides along on every link (tabs, sort headers, pagination) so a
+  // search survives navigation until explicitly cleared.
+  const qParam = props.q ? `&q=${encodeURIComponent(props.q)}` : '';
   // Tabs let the admin browse audit-trail rows (auto-approved, manually
   // accepted, rejected) — not just the pending work queue. Each tab is a
   // plain link so the URL is shareable.
@@ -92,7 +99,7 @@ export function renderAdminPage(props: AdminPageProps): string {
     count: number,
   ) => {
     const active = props.status === key;
-    const href = `/admin/queue?status=${key}&sort=${props.sort}&dir=${props.dir}`;
+    const href = `/admin/queue?status=${key}&sort=${props.sort}&dir=${props.dir}${qParam}`;
     return `<a href="${href}" class="${active ? 'tab tab-active' : 'tab'}">${label} <span class="muted small">(${count})</span></a>`;
   };
   const tabs = `
@@ -102,20 +109,37 @@ export function renderAdminPage(props: AdminPageProps): string {
       ${tab('rejected', 'Rejected', props.totals.rejected)}
       ${tab('error', 'Errored', props.totals.error)}
     </nav>`;
+  // GET form so the search lands in the URL (shareable, back-button
+  // friendly). Hidden inputs carry status/sort/dir; page deliberately
+  // resets to 1 — a new search invalidates the old page number.
+  // Reuses .filter-bar from the public search page for styling.
+  const searchForm = `
+    <form action="/admin/queue" method="get" class="filter-bar">
+      <input type="hidden" name="status" value="${props.status}">
+      <input type="hidden" name="sort" value="${props.sort}">
+      <input type="hidden" name="dir" value="${props.dir}">
+      <input type="search" name="q" value="${escapeHtml(props.q)}" placeholder="Filter by repo, description, or notes" maxlength="100" autocomplete="off">
+      <button type="submit">Search</button>
+      ${props.q ? `<a href="/admin/queue?status=${props.status}&sort=${props.sort}&dir=${props.dir}" class="muted small">Clear</a>` : ''}
+    </form>`;
   if (props.pending.length === 0) {
+    const emptyText = props.q
+      ? `No <strong>${escapeHtml(props.status)}</strong> rows match “${escapeHtml(props.q)}”.`
+      : `No <strong>${escapeHtml(props.status)}</strong> rows.
+        Run <code>pnpm discover</code> on the server to look for new ones.`;
     return `
       <h2>Discovery queue</h2>
       ${tabs}
+      ${searchForm}
       ${flash}
-      <p class="muted">No <strong>${escapeHtml(props.status)}</strong> rows.
-        Run <code>pnpm discover</code> on the server to look for new ones.</p>`;
+      <p class="muted">${emptyText}</p>`;
   }
   const totalForStatus = props.totals[props.status];
   const pagination = renderPagination({
     page: props.page,
     pageSize: props.pageSize,
     total: totalForStatus,
-    baseUrl: `/admin/queue?status=${props.status}&sort=${props.sort}&dir=${props.dir}`,
+    baseUrl: `/admin/queue?status=${props.status}&sort=${props.sort}&dir=${props.dir}${qParam}`,
   });
 
   // Accepted tab: render the shared listing component (same format as
@@ -125,6 +149,7 @@ export function renderAdminPage(props: AdminPageProps): string {
     return `
       <h2>Discovery queue</h2>
       ${tabs}
+      ${searchForm}
       ${flash}
       ${renderLeaderTable(props.listingRows, {
         secondaryLabel: 'Stars Δ 30d',
@@ -228,13 +253,14 @@ export function renderAdminPage(props: AdminPageProps): string {
     const arrow = isActive ? (props.dir === 'desc' ? ' ▼' : ' ▲') : '';
     // Sort change resets to page 1 — paging on a sort the user just
     // toggled mid-stream is more confusing than starting over.
-    const href = `/admin/queue?status=${props.status}&sort=${col}&dir=${nextDir}&page=1`;
+    const href = `/admin/queue?status=${props.status}&sort=${col}&dir=${nextDir}&page=1${qParam}`;
     const cls = `${align}${isActive ? ' sort-active' : ''}`.trim();
     return `<th class="${cls}"><a href="${href}">${escapeHtml(label)}${arrow}</a></th>`;
   };
   return `
     <h2>Discovery queue</h2>
     ${tabs}
+    ${searchForm}
     ${flash}
     <table>
       <thead><tr>

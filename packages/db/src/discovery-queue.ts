@@ -118,6 +118,17 @@ export function recordUserSubmission(
 export type QueueSort = 'discovered' | 'stars' | 'pushed';
 export type SortDir = 'asc' | 'desc';
 
+/** Turn a user query into a LIKE pattern, escaping the wildcards so a
+ * search for "50%_off" matches literally instead of as a pattern. */
+function likePattern(q: string): string {
+  return `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+}
+
+// Search matches url, description, and notes — url covers owner/name,
+// notes covers kind= markers and rejection reasons, so one box answers
+// both "is X queued?" and "why was X rejected?".
+const SEARCH_WHERE = `(url LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\')`;
+
 export function listQueueByStatus(
   db: Db,
   status: DiscoveryStatus,
@@ -125,6 +136,7 @@ export function listQueueByStatus(
   sort: QueueSort = 'discovered',
   dir: SortDir = 'desc',
   offset = 0,
+  q = '',
 ): QueueItem[] {
   const dirSql = dir === 'asc' ? 'ASC' : 'DESC';
   // CASE-WHEN keeps NULLs at the END regardless of direction. SQLite sorts
@@ -136,21 +148,28 @@ export function listQueueByStatus(
       : sort === 'pushed'
         ? `CASE WHEN pushed_at IS NULL THEN 1 ELSE 0 END, pushed_at ${dirSql}, discovered_at DESC`
         : `discovered_at ${dirSql}`;
+  const search = q ? ` AND ${SEARCH_WHERE}` : '';
+  const pattern = likePattern(q);
+  const params: Array<string | number> = q
+    ? [status, pattern, pattern, pattern, limit, offset]
+    : [status, limit, offset];
   return db.raw
-    .prepare<[DiscoveryStatus, number, number], QueueItem>(
+    .prepare<Array<string | number>, QueueItem>(
       `SELECT url, source, discovered_at, status, notes, stars, pushed_at, description
-       FROM discovery_queue WHERE status = ?
+       FROM discovery_queue WHERE status = ?${search}
        ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
     )
-    .all(status, limit, offset);
+    .all(...params);
 }
 
-export function countQueueByStatus(db: Db): Record<DiscoveryStatus, number> {
+export function countQueueByStatus(db: Db, q = ''): Record<DiscoveryStatus, number> {
+  const search = q ? ` WHERE ${SEARCH_WHERE}` : '';
+  const pattern = likePattern(q);
   const rows = db.raw
-    .prepare<[], { status: DiscoveryStatus; n: number }>(
-      'SELECT status, COUNT(*) AS n FROM discovery_queue GROUP BY status',
+    .prepare<string[], { status: DiscoveryStatus; n: number }>(
+      `SELECT status, COUNT(*) AS n FROM discovery_queue${search} GROUP BY status`,
     )
-    .all();
+    .all(...(q ? [pattern, pattern, pattern] : []));
   const out: Record<DiscoveryStatus, number> = {
     pending: 0,
     accepted: 0,

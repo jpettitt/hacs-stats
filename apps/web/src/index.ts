@@ -25,9 +25,13 @@ import { renderRepoDetail } from './pages/repo.js';
 import { renderSearchPage } from './pages/search.js';
 import { renderSubmitPage } from './pages/submit.js';
 import { isSafeRepoFullName } from './sanitize.js';
+import { renderSitemapXml, toLastmodDate } from './sitemap.js';
 
 const DATABASE_PATH = resolveDatabasePath();
 const PORT = Number(process.env.PORT ?? 3000);
+// Canonical public origin for absolute URLs (sitemap <loc>, robots.txt
+// Sitemap line). Override only for staging under another hostname.
+const SITE_ORIGIN = process.env.SITE_ORIGIN ?? 'https://hacs-stats.dev';
 const ADMIN_USER = process.env.ADMIN_USER;
 const ADMIN_PASS = process.env.ADMIN_PASS;
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -168,6 +172,51 @@ app.get('/favicon.svg', (c) => {
   c.header('Content-Type', 'image/svg+xml');
   c.header('Cache-Control', 'public, max-age=86400');
   return c.body(FAVICON_LIVE);
+});
+
+// robots.txt — mostly here to advertise the sitemap. /admin is basic-auth
+// gated and /api is JSON; neither is worth crawl budget.
+app.get('/robots.txt', (c) => {
+  c.header('Content-Type', 'text/plain; charset=utf-8');
+  c.header('Cache-Control', 'public, max-age=86400');
+  return c.body(
+    [
+      'User-agent: *',
+      'Disallow: /admin/',
+      'Disallow: /api/',
+      `Sitemap: ${SITE_ORIGIN}/sitemap.xml`,
+      '',
+    ].join('\n'),
+  );
+});
+
+// sitemap.xml — every indexable page, rebuilt per request from the DB
+// (a few ms) and edge-cached like the HTML pages. lastmod comes from
+// each repo's last successful scrape; pages without a natural data
+// timestamp (about/privacy/submit) omit it rather than fabricate one.
+app.get('/sitemap.xml', (c) => {
+  const lm = catalogueLastModified();
+  if (notModifiedSince(c, lm)) return c.body(null, 304);
+  setCacheHeaders(c, lm);
+  const catalogueDate = lm.toISOString().slice(0, 10);
+  const urls = [
+    // Data-driven listing pages change whenever the catalogue does.
+    ...['/', '/categories', '/search', '/pending', '/removed'].map((p) => ({
+      loc: `${SITE_ORIGIN}${p}`,
+      lastmod: catalogueDate,
+    })),
+    ...['/about', '/privacy', '/submit'].map((p) => ({ loc: `${SITE_ORIGIN}${p}` })),
+    ...repos.listSitemapRepos(db).map((r) => ({
+      loc: `${SITE_ORIGIN}/r/${r.full_name}`,
+      lastmod: toLastmodDate(r.last_scraped_at),
+    })),
+    ...repos.listSitemapOwners(db).map((o) => ({
+      loc: `${SITE_ORIGIN}/owner/${o.owner}`,
+      lastmod: toLastmodDate(o.last_scraped_at),
+    })),
+  ];
+  c.header('Content-Type', 'application/xml; charset=utf-8');
+  return c.body(renderSitemapXml(urls));
 });
 
 // Small progressive-enhancement script for /admin/queue — intercepts
@@ -617,7 +666,11 @@ app.get('/admin/queue', (c) => {
     rawSort === 'stars' || rawSort === 'pushed' ? rawSort : 'discovered';
   const dir: 'asc' | 'desc' = c.req.query('dir') === 'asc' ? 'asc' : 'desc';
   const page = parsePage(c.req.query('page'));
-  const totals = discoveryQueue.countQueueByStatus(db);
+  // Search filters every tab (not just the active one) so the counts
+  // answer "where did repo X end up?" in one glance. Same 100-char cap
+  // as the public /search box.
+  const q = (c.req.query('q') ?? '').trim().slice(0, 100);
+  const totals = discoveryQueue.countQueueByStatus(db, q);
   const pending = discoveryQueue.listQueueByStatus(
     db,
     status,
@@ -625,6 +678,7 @@ app.get('/admin/queue', (c) => {
     sort,
     dir,
     (page - 1) * QUEUE_PAGE_SIZE,
+    q,
   );
   const msg = c.req.query('msg');
   // Enrich each queue item with "related projects" — other repos in our
@@ -665,6 +719,7 @@ app.get('/admin/queue', (c) => {
         dir,
         page,
         pageSize: QUEUE_PAGE_SIZE,
+        q,
         ...(msg !== undefined ? { flash: msg } : {}),
         ...(listingRows ? { listingRows } : {}),
       }),
