@@ -16,7 +16,7 @@
 import type { Db } from '@hacs-stats/db';
 import { repos, snapshots } from '@hacs-stats/db';
 import { discoverCustomRepos } from '../apps/scraper/src/discovery.js';
-import { fetchAndStoreStarHistory } from '../apps/scraper/src/stargazers.js';
+import { syncStarHistory } from '../apps/scraper/src/star-history.js';
 
 export interface AutoApproveEnv {
   off: boolean;
@@ -124,7 +124,7 @@ export async function runOneSweep(
 
   let autoApprovedCount = 0;
   let queuedCount = 0;
-  // Collected during the tx, drained after — fetchAndStoreStarHistory
+  // Collected during the tx, drained after — syncStarHistory
   // makes REST calls and can't run inside better-sqlite3's synchronous
   // transaction. Doing the star-history backfill at discover time means
   // newly auto-approved repos have a chart immediately (otherwise the
@@ -184,14 +184,11 @@ export async function runOneSweep(
 
   // After the transaction commits, backfill star history for each
   // auto-approved repo. Sequential — handful of repos per discover
-  // run, ~10 REST calls each for typical sizes. Failures are
+  // run, one REST call per 30 weeks of repo age. Failures are
   // logged-and-swallowed so one bad fetch doesn't sink the whole sweep.
   for (const s of starsToBackfill) {
     try {
-      await fetchAndStoreStarHistory(db, s.repoId, s.fullName, s.stars, {
-        token,
-        maxPagesPerScrape: 20,
-      });
+      await syncStarHistory(db, s.repoId, s.fullName, s.stars, false, { token });
     } catch (err) {
       console.warn(
         `[discover-core] star-history backfill failed for ${s.fullName}: ${(err as Error).message}`,

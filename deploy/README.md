@@ -125,6 +125,16 @@ want different policy):
 # AUTOAPPROVE_OFF=1     # disable auto-approve entirely
 ```
 
+The scrape rebuilds each repo's star history one time from GitHub's
+per-day endpoint (migration 0016). It uses at most
+`STAR_HISTORY_REBUILD_PAGES` REST requests per night (default 3000), so the
+releases step keeps its quota. The step 2.5 journal line shows
+`N repos still to rebuild`. Increase the value to finish sooner:
+
+```ini
+# STAR_HISTORY_REBUILD_PAGES=3000
+```
+
 After editing, double-check perms:
 
 ```sh

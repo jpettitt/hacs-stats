@@ -58,15 +58,19 @@ export function renderAboutPage(): SafeHtml {
 
     <h3>Stars Δ</h3>
     <p>
-      Star deltas compare today's GraphQL-reported star count to the earliest
-      snapshot we have within the 7d / 30d window. On day 1 of operation, the
-      windows haven't accumulated, so deltas read zero. Genuine.
+      Star deltas are the stars that a repo got in the last 7 or 30 days.
+      They come from GitHub's per-day star history for each repo, so they are
+      correct from the first day that a repo is in the catalogue. GitHub
+      counts the days in US Pacific time, not UTC, so a star can show on the
+      day before its UTC date.
     </p>
 
     <h2>Update cadence</h2>
     <ul>
       <li>Repo catalogue (the HACS default lists) — every day.</li>
       <li>Per-repo metadata (stars, forks, issues) — every day via GraphQL.</li>
+      <li>Per-repo star history — every day via REST, only for repos whose
+        star count changed.</li>
       <li>Per-repo releases &amp; download counts — every day via REST, with
         ETag caching so repos with no activity skip the round trip.</li>
       <li>Custom-repo discovery (GitHub code search for <code>hacs.json</code>) —

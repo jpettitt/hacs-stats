@@ -1,0 +1,11 @@
+-- 0016: when each repo's repo_star_history was last rebuilt in full from
+-- GET /repos/{owner}/{repo}/stargazers/history.
+--
+-- GitHub limited /stargazers to repo admins in July 2026 (it returns 404
+-- for everyone else), which froze the history 0011 built. The new
+-- endpoint returns per-day counts only, bucketed by US Pacific day — not
+-- UTC like the old rows. NULL means the repo still carries the old UTC
+-- rows; the scraper rebuilds those in full, a few thousand pages per
+-- night, so the two bucketings never mix inside one repo. After that,
+-- nightly updates overwrite only the newest 30 weeks.
+ALTER TABLE repos ADD COLUMN star_history_synced_at TEXT;

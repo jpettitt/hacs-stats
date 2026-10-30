@@ -3,7 +3,7 @@
  * Smoke test for the per-day star-history feature.
  *
  * Picks a handful of repos already in the catalogue, fetches their
- * current star count via GitHub GraphQL, then runs fetchAndStoreStarHistory
+ * current star count via GitHub GraphQL, then runs syncStarHistory
  * to populate repo_star_history. After it finishes, the repo detail page
  * should render the full curve instead of the 30-day snapshot fallback.
  *
@@ -12,7 +12,7 @@
  */
 import { openDb, resolveDatabasePath, runMigrations, starHistory } from '@hacs-stats/db';
 import { fetchRepoMetadataBatches } from '../apps/scraper/src/github-graphql.js';
-import { fetchAndStoreStarHistory } from '../apps/scraper/src/stargazers.js';
+import { syncStarHistory } from '../apps/scraper/src/star-history.js';
 
 const TOKEN = process.env.GITHUB_TOKEN;
 if (!TOKEN) {
@@ -20,13 +20,13 @@ if (!TOKEN) {
   process.exit(2);
 }
 
-// Mix of small, medium, and large repos so we exercise the per-scrape
-// cap path AND the no-op-after-warm path. All present in the dev DB.
+// Mix of small, medium, and large repos so we exercise the multi-page
+// rebuild path AND the no-op-after-warm path. All present in the dev DB.
 const TARGETS = [
   'jpettitt/weather-radar-card',
   'jpettitt/geo-clock-card',
   'jpettitt/purpleair-local',
-  'thomasloven/lovelace-card-mod', // large, will cap
+  'thomasloven/lovelace-card-mod', // large, many pages
   'PiotrMachowski/Home-Assistant-custom-components-Xiaomi-Cloud-Map-Extractor',
 ];
 
@@ -65,15 +65,12 @@ async function main() {
     console.log(
       `[smoke] ${canonical}: GitHub=${meta.stars}, stored=${before}, delta=${meta.stars - before}`,
     );
-    const result = await fetchAndStoreStarHistory(db, row.id, canonical, meta.stars, {
+    const synced = starHistory.syncedRepoIds(db).has(row.id);
+    const result = await syncStarHistory(db, row.id, canonical, meta.stars, synced, {
       token: TOKEN as string,
-      // Smoke test: small cap so this finishes fast even on big repos.
-      maxPagesPerScrape: 10,
     });
     const after = starHistory.totalStarsRecorded(db, row.id);
-    console.log(
-      `[smoke]   → ${result.pagesFetched} pages fetched, ${result.deltaApplied} stars applied, total=${after}${result.truncatedByCap ? ' (CAPPED — re-run to continue)' : ''}`,
-    );
+    console.log(`[smoke]   → ${result.kind}, ${result.pages} pages, total=${after}`);
   }
 
   db.close();
