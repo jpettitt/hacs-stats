@@ -50,6 +50,66 @@ async function postWithSecondaryLimitRetry(
   // Unreachable — the loop above always returns or sleeps + continues.
   throw new Error('postWithSecondaryLimitRetry: exhausted retries');
 }
+
+/**
+ * A 5xx, a dropped connection, or a cut-off body. GitHub's GraphQL front
+ * end returns 502/504 when a query times out, so a retry or a smaller
+ * batch usually succeeds. About half of the nightly scrapes in Oct 2026
+ * died on one of these before they were retried.
+ */
+export class TransientGraphqlError extends Error {
+  override name = 'TransientGraphqlError';
+}
+
+const TRANSIENT_RETRY_DELAYS_MS = [2_000, 8_000];
+
+/** When this many single repos still fail, GitHub is down rather than
+ * timing out on some queries — abort instead of splitting every remaining
+ * batch down to single repos. (Not a consecutive-failure count: splitting
+ * down to one bad repo alone fails ~8 requests in a row.) */
+const MAX_SKIPPED_REPOS = 10;
+
+const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function postOnce(fetchImpl: typeof fetch, token: string, query: string): Promise<unknown> {
+  let res: Response;
+  let text: string;
+  try {
+    res = await postWithSecondaryLimitRetry(fetchImpl, token, query);
+    if (res.status >= 500) {
+      await res.body?.cancel();
+      throw new TransientGraphqlError(`graphql ${res.status}`);
+    }
+    text = await res.text();
+  } catch (err) {
+    // fetch surfaces connection resets (also mid-body) as TypeError.
+    if (err instanceof TypeError)
+      throw new TransientGraphqlError(`graphql network: ${err.message}`);
+    throw err;
+  }
+  if (!res.ok) throw new Error(`graphql ${res.status}: ${text.slice(0, 300)}`);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new TransientGraphqlError(`graphql: cut-off JSON body (${text.length} bytes)`);
+  }
+}
+
+async function postWithTransientRetry(opts: FetchOptions, query: string): Promise<unknown> {
+  const sleep = opts.sleep ?? defaultSleep;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postOnce(opts.fetchImpl ?? fetch, opts.token, query);
+    } catch (err) {
+      const delay = TRANSIENT_RETRY_DELAYS_MS[attempt];
+      if (!(err instanceof TransientGraphqlError) || delay === undefined) throw err;
+      console.warn(
+        `[graphql] ${err.message} (retry ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length} in ${delay}ms)`,
+      );
+      await sleep(delay);
+    }
+  }
+}
 /**
  * Batch size: 100 repos per query.
  *
@@ -88,6 +148,8 @@ export interface FetchOptions {
   guard?: RateLimitGuard;
   /** Override default 100. */
   batchSize?: number;
+  /** Inject for tests (transient-retry backoff). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -102,7 +164,6 @@ async function fetchOneBatch(
   identifiers: readonly { owner: string; name: string }[],
   opts: FetchOptions,
 ): Promise<RepoMetadata[]> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
   const aliasFor = (i: number) => `r${i}`;
   // Build one repository(...) call per alias. Variables would let us reuse
   // a single query string across batches, but inlining is fine: a 100-repo
@@ -131,14 +192,7 @@ async function fetchOneBatch(
     }
   `;
 
-  const res = await postWithSecondaryLimitRetry(fetchImpl, opts.token, query);
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`graphql ${res.status}: ${body.slice(0, 300)}`);
-  }
-
-  const payload = (await res.json()) as {
+  const payload = (await postWithTransientRetry(opts, query)) as {
     data?: Record<string, unknown> & { rateLimit?: { remaining: number; resetAt: string } };
     errors?: { message: string; type?: string }[];
   };
@@ -233,6 +287,7 @@ export async function* fetchRepoMetadataBatches(
   // hitting + recovering. Override via GRAPHQL_BATCH_DELAY_MS to tune.
   const interBatchSleepMs = Number(process.env.GRAPHQL_BATCH_DELAY_MS ?? 750);
   let first = true;
+  const failures = { skipped: 0 };
   for (let i = 0; i < identifiers.length; i += size) {
     if (opts.guard) await opts.guard.waitIfNeeded();
     if (!first && interBatchSleepMs > 0) {
@@ -240,7 +295,36 @@ export async function* fetchRepoMetadataBatches(
     }
     first = false;
     const slice = identifiers.slice(i, i + size);
-    yield await fetchOneBatch(slice, opts);
+    yield await fetchWithSplit(slice, opts, failures);
+  }
+}
+
+/**
+ * On a transient failure that outlasts the retries, split the slice in
+ * half: a smaller query is less likely to time out. A single repo that
+ * still fails is left out of the result, not returned as missing — the
+ * caller would count a missing repo against its lifecycle (offline →
+ * removed). It gets a fresh try on the next scrape.
+ */
+async function fetchWithSplit(
+  slice: readonly { owner: string; name: string }[],
+  opts: FetchOptions,
+  failures: { skipped: number },
+): Promise<RepoMetadata[]> {
+  try {
+    return await fetchOneBatch(slice, opts);
+  } catch (err) {
+    if (!(err instanceof TransientGraphqlError)) throw err;
+    if (slice.length === 1) {
+      if (++failures.skipped >= MAX_SKIPPED_REPOS) throw err;
+      console.warn(`[graphql] skipping ${slice[0]?.owner}/${slice[0]?.name}: ${err.message}`);
+      return [];
+    }
+    const mid = Math.ceil(slice.length / 2);
+    console.warn(`[graphql] ${err.message} on ${slice.length} repos — splitting the batch`);
+    const left = await fetchWithSplit(slice.slice(0, mid), opts, failures);
+    const right = await fetchWithSplit(slice.slice(mid), opts, failures);
+    return [...left, ...right];
   }
 }
 
