@@ -1,10 +1,9 @@
 import type { Db } from './client.js';
 
 /**
- * Per-day delta accumulator. ON CONFLICT adds rather than replaces — the
- * incremental scraper can record multiple deltas for the same day across
- * runs (e.g. when paging back catches stars dated today). Negative deltas
- * are allowed (see migration 0011 comment on unstar handling).
+ * Per-day delta accumulator. ON CONFLICT adds rather than replaces.
+ * Production writes go through `replaceStarHistory`; this stays for test
+ * setup, where adding one bucket at a time reads better.
  */
 export function upsertStarsAdded(db: Db, repoId: number, day: string, delta: number): void {
   db.raw
@@ -17,8 +16,8 @@ export function upsertStarsAdded(db: Db, repoId: number, day: string, delta: num
     .run(repoId, day, delta);
 }
 
-/** Used by the scraper to decide whether to call /stargazers at all —
- * if our stored total equals GitHub's count there's nothing to fetch. */
+/** Used by the scraper to decide whether to fetch at all — if our stored
+ * total equals GitHub's count there's nothing new. */
 export function totalStarsRecorded(db: Db, repoId: number): number {
   const row = db.raw
     .prepare<[number], { total: number | null }>(
@@ -28,8 +27,59 @@ export function totalStarsRecorded(db: Db, repoId: number): number {
   return row?.total ?? 0;
 }
 
+/** Stars recorded on days strictly before `day`. */
+export function starsRecordedBefore(db: Db, repoId: number, day: string): number {
+  const row = db.raw
+    .prepare<[number, string], { total: number | null }>(
+      'SELECT SUM(stars_added) AS total FROM repo_star_history WHERE repo_id = ? AND day < ?',
+    )
+    .get(repoId, day);
+  return row?.total ?? 0;
+}
+
+/**
+ * Replace a repo's buckets from `fromDay` onward (all of them when
+ * `fromDay` is null) with `perDay`. Zero-count days are not stored.
+ * One transaction, so a reader never sees the history half-replaced.
+ */
+export function replaceStarHistory(
+  db: Db,
+  repoId: number,
+  perDay: ReadonlyMap<string, number>,
+  fromDay: string | null,
+): void {
+  const ins = db.raw.prepare<[number, string, number]>(
+    'INSERT INTO repo_star_history (repo_id, day, stars_added) VALUES (?, ?, ?)',
+  );
+  db.raw.transaction(() => {
+    if (fromDay === null) {
+      db.raw.prepare('DELETE FROM repo_star_history WHERE repo_id = ?').run(repoId);
+    } else {
+      db.raw
+        .prepare('DELETE FROM repo_star_history WHERE repo_id = ? AND day >= ?')
+        .run(repoId, fromDay);
+    }
+    for (const [day, n] of perDay) {
+      if (n !== 0) ins.run(repoId, day, n);
+    }
+  })();
+}
+
+/** Repos whose history was rebuilt from the per-day endpoint (migration 0016). */
+export function syncedRepoIds(db: Db): Set<number> {
+  const rows = db.raw
+    .prepare<[], { id: number }>('SELECT id FROM repos WHERE star_history_synced_at IS NOT NULL')
+    .all();
+  return new Set(rows.map((r) => r.id));
+}
+
+export function markStarHistorySynced(db: Db, repoId: number, at: string): void {
+  db.raw.prepare('UPDATE repos SET star_history_synced_at = ? WHERE id = ?').run(at, repoId);
+}
+
 export interface StarHistoryPoint {
-  /** 'YYYY-MM-DD' UTC. */
+  /** 'YYYY-MM-DD'. US Pacific day for rows from the per-day endpoint, UTC
+   * for rows from the old /stargazers path (see migration 0016). */
   day: string;
   /** Cumulative total stars at end of this day. */
   cumulative: number;

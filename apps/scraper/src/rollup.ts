@@ -113,18 +113,16 @@ export function computeStatsCache(
         ),
         star_deltas AS (
           -- 7d / 30d star deltas computed from repo_star_history (per-day
-          -- buckets, fed by the scraper's step 2.5 from /stargazers
-          -- timestamps). Replaces the old "diff today's repo_snapshot
-          -- against the snapshot N days ago" approach, which gave delta=0
-          -- for any repo we hadn't been snapshotting for N+ days. Star-
-          -- history goes back to repo creation, so deltas are accurate
-          -- on the first day a repo is in the catalogue.
+          -- buckets, fed by the scraper's step 2.5 from GitHub's
+          -- /stargazers/history). Replaces the old "diff today's
+          -- repo_snapshot against the snapshot N days ago" approach, which
+          -- gave delta=0 for any repo we hadn't been snapshotting for N+
+          -- days. Star history goes back to repo creation, so deltas are
+          -- accurate on the first day a repo is in the catalogue.
           --
-          -- Deploy note: the first scrape after enabling this can leave
-          -- deltas at 0 for repos whose star history hasn't been
-          -- backfilled yet by step 2.5. They populate on the next
-          -- nightly run as the per-scrape cap walks each repo's history
-          -- backward from /stargazers.
+          -- Buckets are US Pacific days (see star-history.ts), so a window
+          -- ending on the UTC @asOfDate can miss the last few hours of
+          -- stars; they count in the next run.
           SELECT
             repo_id,
             COALESCE(SUM(CASE

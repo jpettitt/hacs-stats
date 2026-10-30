@@ -5,6 +5,7 @@ import {
   resolveDatabasePath,
   runMigrations,
   snapshots,
+  starHistory,
 } from '@hacs-stats/db';
 import { mapLimit } from './concurrency.js';
 import { fetchRepoMetadataBatches } from './github-graphql.js';
@@ -15,19 +16,18 @@ import { RateLimitGuard } from './rate-limit.js';
 import { applyRetention } from './retention.js';
 import { computeStatsCache } from './rollup.js';
 import { todayUtcIsoDate } from './snapshot-date.js';
-import { fetchAndStoreStarHistory } from './stargazers.js';
+import { syncStarHistory } from './star-history.js';
 
 const DATABASE_PATH = resolveDatabasePath();
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const MANIFEST_CONCURRENCY = Number(process.env.MANIFEST_CONCURRENCY ?? 12);
 const RELEASES_CONCURRENCY = Number(process.env.RELEASES_CONCURRENCY ?? 12);
-// Star-history step (new in 2026-06). Lower concurrency than releases —
-// each repo can spawn up to MAX_STARGAZER_PAGES_PER_SCRAPE serialised
-// REST calls when it has a backlog. The cap exists so a never-tracked
-// 40k-star repo doesn't burn 400 calls in one scrape; instead the
-// backfill spreads over (40000 / 100 / cap) scrapes.
-const STARGAZER_CONCURRENCY = Number(process.env.STARGAZER_CONCURRENCY ?? 6);
-const MAX_STARGAZER_PAGES_PER_SCRAPE = Number(process.env.MAX_STARGAZER_PAGES_PER_SCRAPE ?? 20);
+// Star-history step. Each changed repo costs one REST page; a full
+// rebuild (once per repo, see star-history.ts) costs one page per 30
+// weeks of repo age and draws on STAR_HISTORY_REBUILD_PAGES per run, so
+// the one-time migration leaves REST quota for the releases step.
+const STAR_HISTORY_CONCURRENCY = Number(process.env.STAR_HISTORY_CONCURRENCY ?? 6);
+const STAR_HISTORY_REBUILD_PAGES = Number(process.env.STAR_HISTORY_REBUILD_PAGES ?? 3000);
 // `process.env.SCRAPE_LIMIT ? …` would treat '0' as truthy (non-empty string)
 // AND `0` as falsy after Number(), then `LIMIT 0` would silently become "no
 // limit" — exactly the surprising behaviour we DON'T want. Explicitly check
@@ -257,41 +257,41 @@ async function ingest(): Promise<IngestResult> {
     );
 
     // --- Step 2.5: per-day star history --------------------------------
-    // Brings repo_star_history up to date from /stargazers. Cheap when
-    // delta=0 (the common case) — zero REST calls. New repos and
-    // ones with backlog page-back up to MAX_STARGAZER_PAGES_PER_SCRAPE.
+    // Repos whose count changed go first, so active repos get the rebuild
+    // budget before quiet ones.
+    const synced = starHistory.syncedRepoIds(db);
+    const queue = starsForHistory
+      .map((s) => ({ ...s, changed: starHistory.totalStarsRecorded(db, s.repoId) !== s.stars }))
+      .sort((a, b) => Number(b.changed) - Number(a.changed));
     console.log(
-      `[scrape] step 2.5 — star history for ${starsForHistory.length} repos (concurrency ${STARGAZER_CONCURRENCY}, cap ${MAX_STARGAZER_PAGES_PER_SCRAPE} pages/repo)`,
+      `[scrape] step 2.5 — star history for ${queue.length} repos (concurrency ${STAR_HISTORY_CONCURRENCY}, rebuild budget ${STAR_HISTORY_REBUILD_PAGES} pages)`,
     );
-    let starHistoryUpdated = 0;
-    let starHistoryNoOp = 0;
-    let starHistoryPagesTotal = 0;
-    let starHistoryTruncated = 0;
-    let starHistoryFailed = 0;
-    await mapLimit(starsForHistory, STARGAZER_CONCURRENCY, async (s) => {
+    const budget = { pagesLeft: STAR_HISTORY_REBUILD_PAGES };
+    const counts = { 'no-op': 0, updated: 0, rebuilt: 0, deferred: 0, failed: 0, pages: 0 };
+    let firstError: string | null = null;
+    await mapLimit(queue, STAR_HISTORY_CONCURRENCY, async (s) => {
       try {
-        await guard.waitIfNeeded();
-        const result = await fetchAndStoreStarHistory(db, s.repoId, s.fullName, s.stars, {
+        const r = await syncStarHistory(db, s.repoId, s.fullName, s.stars, synced.has(s.repoId), {
           token: GITHUB_TOKEN,
-          maxPagesPerScrape: MAX_STARGAZER_PAGES_PER_SCRAPE,
-          nowDay: today,
+          guard,
+          budget,
         });
-        if (result.pagesFetched === 0 && result.deltaApplied === 0) {
-          starHistoryNoOp++;
-        } else {
-          starHistoryUpdated++;
-          starHistoryPagesTotal += result.pagesFetched;
-          if (result.truncatedByCap) starHistoryTruncated++;
-        }
-      } catch {
-        // Soft-fail per repo so one bad call doesn't take down the step.
-        // Next scrape retries.
-        starHistoryFailed++;
+        counts[r.kind]++;
+        counts.pages += r.pages;
+      } catch (err) {
+        // Soft-fail per repo; next scrape retries. Log the first error so
+        // a systematic failure (the July 2026 /stargazers 404s ran for
+        // months as silent "updated" counts) shows up on day one.
+        counts.failed++;
+        firstError ??= `${s.fullName}: ${(err as Error).message}`;
       }
     });
     console.log(
-      `[scrape]   ${starHistoryUpdated} updated (${starHistoryPagesTotal} pages, ${starHistoryTruncated} hit the per-scrape cap), ${starHistoryNoOp} no-op, ${starHistoryFailed} failed`,
+      `[scrape]   ${counts.updated} updated, ${counts.rebuilt} rebuilt, ${counts['no-op']} no-op, ` +
+        `${counts.deferred} deferred to a later run, ${counts.failed} failed (${counts.pages} pages); ` +
+        `${queue.filter((s) => !synced.has(s.repoId)).length - counts.rebuilt} repos still to rebuild`,
     );
+    if (firstError) console.warn(`[scrape]   first star-history failure — ${firstError}`);
 
     // --- Phase 3 step B: REST releases → releases + release_asset_snapshots -
     console.log(
